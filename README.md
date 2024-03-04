@@ -67,7 +67,7 @@ devtools::build_manual() #build manual and saves PDF in parent directory of the 
 
 ### Version History
 
-**v0.3 (TBD)**
+**v0.3 (3/4/2024)**
 
 + Various code improvements
 + Improved roxygen2 documentation
