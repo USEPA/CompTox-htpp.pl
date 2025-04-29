@@ -666,7 +666,7 @@ generate_htppNullChems <- function(n_lowest_conc = 2, n_cv_active_conc = 6, rel_
       #filter out wells with low cell count
       CPData <- CPData %>% filter(rel_cell_count>50)
 
-      cat("For", cell, "cells", "and plate group", PG, "there should be a total of", floor(min(table(CPData$pg_id, CPData$replicate_num))/length(ConcList)), "null chemicals\n")
+      cat("For", cell, "cells", "and plate group", PG, "there should be a total of", floor(min(CPData[, .N, by = c("plate_id", "replicate_num")]$N)/length(ConcList)), "null chemicals\n")
 
       ## Evaluate how may chemicals are eligible for NULL modeling on each plate group.
       ## Multiply the minimum number of eligible chemicals on any plate group by 2, representing the lowest 2 dose levels. (note this has already been done here)
@@ -674,7 +674,7 @@ generate_htppNullChems <- function(n_lowest_conc = 2, n_cv_active_conc = 6, rel_
       ## Example: We have a minimum of 82 chemicals across the 4 plates. 82 / 8 = 10.25. Round down to 10 for the number of null chemicals
       ## This may not be a useful metric for datasets without CV-specific data. See below for alternative calculation.
 
-      null_chems <- floor(min(table(CPData$pg_id, CPData$replicate_num))/length(ConcList))
+      null_chems <- floor(min(CPData[, .N, by = c("plate_id", "replicate_num")]$N)/length(ConcList))
 
       ## delete unneeded meta information
       colnames(CPData)[ which(!grepl("^f_", colnames(CPData))) ]
