@@ -4,7 +4,9 @@
 #' @param SampleKey dataframe: The sample key with chemical info and metadata
 #' @param rerun boolean: Whether you want to clear the mongo database as you go and refill it; false by default
 #' @param replace boolean: Whether you want to replace existing records in the mongo database; false by default
-#' @param mongoUrl characters string A mongoUrl with credentials to access the database
+#' @param mongoUrl character string: A mongoUrl with credentials to access the database
+#' @param use_db boolean: Determines whether mongoDB will be used or not; default is TRUE
+#' @param json_collection_path character: Full file path to where JSON collections will be stored
 #'
 #' @import data.table
 #' @import plyr
@@ -20,87 +22,165 @@
 #' @export generate_htppWellTrt_htppChem
 #'
 
-generate_htppWellTrt_htppChem <- function(SampleKey, mongoUrl, rerun=FALSE, replace=TRUE){
+generate_htppWellTrt_htppChem <- function(SampleKey, mongoUrl="", rerun=FALSE, replace=TRUE, use_db=TRUE, json_collection_path=""){
+  if(use_db == TRUE){
+    htpp_well_trt <- mongo(collection = "htpp_well_trt", url = mongoUrl, verbose = getOption("verbose"))
+    htpp_well_trt$count()
 
-  htpp_well_trt <- mongo(collection = "htpp_well_trt", url = mongoUrl, verbose = getOption("verbose"))
-  htpp_well_trt$count()
-
-  if(rerun == TRUE){
-    htpp_well_trt$drop() #delete everything that was in it
-  }
-  keysmith <- htpp_well_trt$distinct("sample_id")
+    if(rerun == TRUE){
+      htpp_well_trt$drop() #delete everything that was in it
+    }
+    keysmith <- htpp_well_trt$distinct("sample_id")
 
 
-  if(replace == FALSE) {
-    for(i in 1:dim(SampleKey)[1]){
-      if(SampleKey[i,]$sample_id %in% keysmith){
-        next
-      }else{
-        htpp_well_trt$insert(SampleKey[i,], auto_unbox=TRUE, na = "null")
+    if(replace == FALSE) {
+      for(i in 1:dim(SampleKey)[1]){
+        if(SampleKey[i,]$sample_id %in% keysmith){
+          next
+        }else{
+          htpp_well_trt$insert(SampleKey[i,], auto_unbox=TRUE, na = "null")
+        }
+      }
+    }else{
+      #insert into collection
+      for(i in 1:dim(SampleKey)[1]){
+        htpp_well_trt$remove(query = mongoQuery(sample_id = SampleKey[i,]$sample_id)) #remove existing record
+        htpp_well_trt$insert(SampleKey[i,], auto_unbox=TRUE, na = "null") #replace existing record
       }
     }
-  } else{
-    #insert into collection
-    for(i in 1:dim(SampleKey)[1]){
-      htpp_well_trt$remove(query = mongoQuery(sample_id = SampleKey[i,]$sample_id)) #remove existing record
-      htpp_well_trt$insert(SampleKey[i,], auto_unbox=TRUE, na = "null") #replace existing record
+
+    #Use chem info that is part of the sample key
+    ChemInfo <- SampleKey
+
+    #columns needed for htpp_chem: stype, dtxsid, casrn, chem_name
+    ChemInfo <- ChemInfo[, c("stype", "chem_name", "chem_id","dtxsid", "casrn")] #keep sample type for reference
+    ChemInfo <- unique(ChemInfo)
+
+    htpp_chem <- mongo(collection = "htpp_chem", url = mongoUrl, verbose = getOption("verbose"))
+
+    if(rerun == TRUE){
+      htpp_chem$drop()
     }
-  }
 
+    ChemInfo <- dplyr::mutate(ChemInfo, chem_id=ifelse(is.na(chem_id), chem_name, chem_id))
+    keysmith1 <- htpp_chem$distinct("chem_id")
 
-
-
-  #Use chem info that is part of the sample key
-  ChemInfo <- SampleKey
-
-  #columns needed for htpp_chem: stype, dtxsid, casrn, chem_name
-  ChemInfo <- ChemInfo[, c("stype", "chem_name", "chem_id","dtxsid", "casrn")] #keep sample type for reference
-  ChemInfo <- unique(ChemInfo)
-
-
-
-  htpp_chem <- mongo(collection = "htpp_chem", url = mongoUrl, verbose = getOption("verbose"))
-
-  if(rerun == TRUE){
-    htpp_chem$drop()
-  }
-
-  ChemInfo <- dplyr::mutate(ChemInfo, chem_id=ifelse(is.na(chem_id), chem_name, chem_id))
-  keysmith1 <- htpp_chem$distinct("chem_id")
-
-
-  if(replace == FALSE) {
-    for(i in 1:dim(ChemInfo)[1]){
-      if(ChemInfo[i,]$chem_id %in% keysmith1){
-        next
-      }else{
-        htpp_chem$insert(ChemInfo[i,], auto_unbox=TRUE)
+    if(replace == FALSE) {
+      for(i in 1:dim(ChemInfo)[1]){
+        if(ChemInfo[i,]$chem_id %in% keysmith1){
+          next
+        }else{
+          htpp_chem$insert(ChemInfo[i,], auto_unbox=TRUE)
+        }
+      }
+    }else{
+      #insert into collection
+      for(i in 1:dim(ChemInfo)[1]){
+        htpp_chem$remove(query = mongoQuery(chem_id = ChemInfo[i,]$chem_id)) #remove existing record
+        htpp_chem$insert(ChemInfo[i,], auto_unbox=TRUE) #replace record
       }
     }
-  } else{
-    #insert into collection
-    for(i in 1:dim(ChemInfo)[1]){
-      htpp_chem$remove(query = mongoQuery(chem_id = ChemInfo[i,]$chem_id)) #remove existing record
-      htpp_chem$insert(ChemInfo[i,], auto_unbox=TRUE) #replace record
+
+    if(htpp_well_trt$count() != length(SampleKey$sample_id)){
+      message(paste("sample_id counts do not match.  Sample counts in SampleKey=", length(SampleKey$sample_id), "and sample counts in Mongo database=",htpp_well_trt$count()))
     }
-  }
 
-  if(htpp_well_trt$count() != length(SampleKey$sample_id)){
-    message(paste("sample_id counts do not match.  Sample counts in SampleKey=", length(SampleKey$sample_id), "and sample counts in Mongo database=",htpp_well_trt$count()))
-  }
+    if(length(unique((ChemInfo$chem_id))) != htpp_chem$count()){
+      message(paste("Chemical counts do not match.  Chemical counts in ChemInfo =", length(ChemInfo$chem_id), "and chemical counts in Mongo database =", htpp_chem$count()))
+    }
 
-  if(length(unique((ChemInfo$chem_id))) != htpp_chem$count()){
-    message(paste("Chemical counts do not match.  Chemical counts in ChemInfo =", length(ChemInfo$chem_id), "and chemical counts in Mongo database =", htpp_chem$count()))
+  }else if(use_db == FALSE){
+    if(rerun == TRUE){
+      htpp_well_trt<-data.table(SampleKey)
+    }else if(rerun == FALSE & file.exists(paste(json_collection_path,"htpp_well_trt.JSON", sep = "/"))){
+      htpp_well_trt<-data.table(fromJSON(txt=paste(json_collection_path,"htpp_well_trt.JSON", sep = "/")))
+      htpp_well_trt[htpp_well_trt == "NA"] <- NA
+      keysmith <- htpp_well_trt$sample_id%>%unique()
+      if(replace == FALSE){
+        for(sample in unique(SampleKey[, sample_id])){
+          if(SampleKey[sample_id == sample,sample_id] %in% keysmith){
+            next
+          }else{
+            htpp_well_trt<- rbind(htpp_well_trt, SampleKey[sample_id == sample,])
+          }
+        }
+      }else{
+        for(sample in unique(SampleKey[, sample_id])){
+          if(SampleKey[sample_id == sample, sample_id] %in% keysmith){
+            htpp_well_trt[sample_id == sample,]<-SampleKey[sample_id == sample,] #replace existing record in htpp_well_trt with new values from SampleKey
+          }else{
+            htpp_well_trt <- rbind(htpp_well_trt, SampleKey[sample_id == sample, ])
+          }
+        }
+      }
+    }else if(rerun == FALSE & file.exists(paste(json_collection_path,"htpp_well_trt.JSON", sep = "/")) == FALSE){
+      htpp_well_trt<-data.table(SampleKey)
+    }
+
+    #Use chem info that is part of the sample key
+    ChemInfo <- SampleKey
+
+    #columns needed for htpp_chem: stype, dtxsid, casrn, chem_name
+    ChemInfo <- ChemInfo[, c("stype", "chem_name", "chem_id","dtxsid", "casrn")] #keep sample type for reference
+    ChemInfo <- unique(ChemInfo)
+
+    ChemInfo <- dplyr::mutate(ChemInfo, chem_id=ifelse(is.na(chem_id), chem_name, chem_id))
+
+    if(rerun == TRUE){
+      htpp_chem<-data.table(ChemInfo)
+    }else if(rerun == FALSE & file.exists(paste(json_collection_path,"htpp_chem.JSON", sep = "/"))){
+      htpp_chem<-data.table(fromJSON(txt=paste(json_collection_path,"htpp_chem.JSON", sep = "/")))
+      htpp_chem[htpp_chem == "NA"] <- NA
+      keysmith1 <- htpp_chem$chem_id%>%unique()
+      if(replace == FALSE){
+        for(chem in unique(ChemInfo[, chem_id])){
+          if(ChemInfo[chem_id == chem, chem_id] %in% keysmith1){
+            next
+          }else{
+            htpp_chem<-rbind(htpp_chem, ChemInfo[chem_id == chem,])
+          }
+        }
+      }else{
+        for(chem in unique(ChemInfo[, chem_id])){
+          if(ChemInfo[chem_id == chem, chem_id] %in% keysmith1){
+            htpp_chem[chem_id == chem,]<-ChemInfo[chem_id == chem,]
+          } else{
+            htpp_chem <- rbind(htpp_chem, ChemInfo[chem_id == chem,])
+          }
+        }
+      }
+    }else if(rerun == FALSE & file.exists(paste(json_collection_path,"htpp_chem.JSON", sep = "/")) == FALSE){
+      htpp_chem<-data.table(ChemInfo)
+    }
+
+    #write to JSON file
+    htpp_chemJSON<-toJSON(htpp_chem, na = "string", digits = 8)
+    write(htpp_chemJSON, file=paste(json_collection_path,"htpp_chem.JSON", sep = "/"))
+    htpp_well_trtJSON<-toJSON(htpp_well_trt, na = "string", digits = 8)
+    write(htpp_well_trtJSON, file=paste(json_collection_path,"htpp_well_trt.JSON", sep = "/"))
+
+    if(length(htpp_well_trt$sample_id) != length(SampleKey$sample_id)){
+      message(paste("sample_id counts do not match.  Sample counts in SampleKey=", length(SampleKey$sample_id), "and sample counts in Mongo database=",length(htpp_well_trt$sample_id)))
+    }
+
+    if(length(htpp_chem$chem_id) != length(unique((ChemInfo$chem_id)))){
+      message(paste("Chemical counts do not match.  Chemical counts in ChemInfo =", length(ChemInfo$chem_id), "and chemical counts in Mongo database =", length(htpp_chem$chem_id)))
+    }
+
   }
 }
+
 
 #' Inserts feature and category data into mongo collection htpp_feature and htpp_category
 #'
 #' @param inputPath  character string: Can either be a truncated path, or a full path to a HTPP data file. If it is truncated, the function will rebuild a full path using file_path
 #' @param PlateID character string: The PlateID for the plate being analyzed
+#' @param Cell_Type character: The cell type associated with the specific feature and category set used for a set of HTPP plates; will be saved to collections
 #' @param mongoUrl character string: The database where the collections will be stored
 #' @param file_path character string: The path to where the input file is located
 #' @param rerun boolean:  Whether to delete and reinsert into both collections; false by default
+#' @param use_db boolean. Determines whether mongoDB will be used or not; default is TRUE
+#' @param json_collection_path character. Full file path to where JSON collections will be stored
 #'
 #' @import data.table
 #' @import plyr
@@ -115,7 +195,7 @@ generate_htppWellTrt_htppChem <- function(SampleKey, mongoUrl, rerun=FALSE, repl
 #'
 #' @export generate_htppFeature_htppCategory
 
-generate_htppFeature_htppCategory <- function(inputPath, PlateID, mongoUrl, file_path="", rerun=FALSE){
+generate_htppFeature_htppCategory <- function(inputPath, PlateID, Cell_Type, mongoUrl="", file_path="", rerun=FALSE, use_db=TRUE, json_collection_path=""){
   if (nchar(file_path) > 0){
     Table1 <- suppressMessages(read_delim(paste(file_path, inputPath, sep = "/"), delim = "\t", col_names = T, skip = 9, n_max = 1000) )
   }else{
@@ -128,7 +208,7 @@ generate_htppFeature_htppCategory <- function(inputPath, PlateID, mongoUrl, file
                   sample_id_field = paste0(sample_id, "_f", Field),
                   cell_keep = T,
                   Position_both_Centroid_Distance = 0)
-  FeatureList <- tibble(feature_name_harmony = colnames(Table1)) %>%
+  FeatureList <- tibble(cell_type=Cell_Type, feature_name_harmony = colnames(Table1)) %>%
     dplyr::mutate(feature_name_r = feature_name_harmony)
 
 
@@ -282,41 +362,76 @@ generate_htppFeature_htppCategory <- function(inputPath, PlateID, mongoUrl, file
     dplyr::mutate(feature_name_mongo = ifelse(column_type == "M", feature_name_r, feature_name_mongo)) %>%
     arrange(desc(column_type), category_name_r,  feature_name_r)
 
-  write_csv(FeatureList, file = "./htpp_feature.csv")
+  #write_csv(FeatureList, file = "./htpp_feature.csv")
   range(FeatureList$feature_id, na.rm=T)
+  if(use_db==TRUE){
+    htpp_feature <- mongo(collection="htpp_feature", url=mongoUrl, verbose=getOption("verbose"))
 
-  htpp_feature <- mongo(collection="htpp_feature", url=mongoUrl, verbose=getOption("verbose"))
+    #delete and reinsert if rerun
+    if(rerun == TRUE){
+      htpp_feature$remove(query = mongoQuery(cell_type = Cell_Type))
+    }
 
-  #delete and reinsert if rerun
-  if(rerun == TRUE){
-    htpp_feature$drop()
-  }
+    htpp_feature$insert(FeatureList, na = "null")
+    if(htpp_feature$count(query = mongoQuery(cell_type = Cell_Type)) != 1410){
+      warning(paste("Incorrect number of feature documents.  Expected 1410 features, instead there are", htpp_feature$count(query = mongoQuery(cell_type = Cell_Type)), "features in collection."))
+    }
 
-  htpp_feature$insert(FeatureList, na = "null")
-  if(htpp_feature$count() != 1410){
-    warning(paste("Incorrect number of feature documents.  Expected 1410 features, instead there are", htpp_feature$count(), "features in collection."))
-  }
+    List <- mongo(collection="htpp_feature", url=mongoUrl, verbose=getOption("verbose"))$find(query = mongoQuery(cell_type = Cell_Type))
 
-  List <- mongo(collection="htpp_feature", url=mongoUrl, verbose=getOption("verbose"))$find()
+    List2 <- List %>% filter(!is.na(feature_id)) %>%
+      group_by(category_name_r) %>%
+      dplyr::summarise(n_features = n_distinct(feature_id), .groups = 'drop') %>%
+      dplyr::mutate(category_name_description = category_name_r,
+                    channel = str_split_fixed(string = category_name_r, pattern = "_", n = 3)[,1],
+                    module = str_split_fixed(string = category_name_r, pattern = "_", n = 3)[,2],
+                    compartment = str_split_fixed(string = category_name_r, pattern = "_", n = 3)[,3],
+                    cell_type=Cell_Type)
 
-  List2 <- List %>% filter(!is.na(feature_id)) %>%
-    group_by(category_name_r) %>%
-    dplyr::summarise(n_features = n_distinct(feature_id), .groups = 'drop') %>%
-    dplyr::mutate(category_name_description = category_name_r,
-                  channel = str_split_fixed(string = category_name_r, pattern = "_", n = 3)[,1],
-                  module = str_split_fixed(string = category_name_r, pattern = "_", n = 3)[,2],
-                  compartment = str_split_fixed(string = category_name_r, pattern = "_", n = 3)[,3])
+    htpp_category <- mongo(collection="htpp_category", url=mongoUrl, verbose=getOption("verbose"))
 
-  htpp_category <- mongo(collection="htpp_category", url=mongoUrl, verbose=getOption("verbose"))
+    if(rerun == TRUE){
+      htpp_category$remove(query = mongoQuery(cell_type = Cell_Type))
+    }
 
-  if(rerun == TRUE){
-    htpp_category$drop()
-  }
+    htpp_category$insert(List2, na = "null")
 
-  htpp_category$insert(List2, na = "null")
+    if(htpp_category$count(query = mongoQuery(cell_type = Cell_Type)) != 49){
+      warning(paste("Incorrect number of category documents.  Expected 49 categories, instead there are", htpp_category$count(query = mongoQuery(cell_type = Cell_Type)), "categories."))
+    }
+  }else if(use_db == FALSE){
+    if(rerun==TRUE){
+      htpp_feature<-data.table(FeatureList)
+    }else{
+      htpp_feature<-data.table(FeatureList)
+    }
 
-  if(htpp_category$count() != 49){
-    warning(paste("Incorrect number of category documents.  Expected 49 categories, instead there are", htpp_category$count(), "categories."))
+    featureJSON<-toJSON(htpp_feature, na = "string", digits = 8)
+    write(featureJSON, file=paste(json_collection_path, "htpp_feature.JSON", sep="/"))
+    if(nrow(htpp_feature) != 1410){
+      warning(paste("Incorrect number of feature documents.  Expected 1410 features, instead there are", nrow(htpp_feature), "features in collection."))
+    }
+
+    List2 <- htpp_feature %>% filter(!is.na(feature_id)) %>%
+      group_by(category_name_r) %>%
+      dplyr::summarise(n_features = n_distinct(feature_id), .groups = 'drop') %>%
+      dplyr::mutate(category_name_description = category_name_r,
+                    channel = str_split_fixed(string = category_name_r, pattern = "_", n = 3)[,1],
+                    module = str_split_fixed(string = category_name_r, pattern = "_", n = 3)[,2],
+                    compartment = str_split_fixed(string = category_name_r, pattern = "_", n = 3)[,3])
+
+    if(rerun==TRUE){
+      htpp_category<-data.frame(List2)
+    }else{
+      htpp_category<-data.frame(List2)
+    }
+    categoryJSON<-toJSON(htpp_category, na = "string", digits = 8)
+
+    write(categoryJSON, file=paste(json_collection_path, "htpp_category.JSON", sep="/"))
+
+    if(nrow(htpp_category) != 49){
+      warning(paste("Incorrect number of category documents.  Expected 49 categories, instead there are", nrow(htpp_category), "categories."))
+    }
   }
 
 }
@@ -333,6 +448,8 @@ generate_htppFeature_htppCategory <- function(inputPath, PlateID, mongoUrl, file
 #' @param n_max numeric: The maximum dimensions of the table
 #' @param rerun boolean: Whether to drop and replace the collections in the dataframe before inserting
 #' @param replace boolean: Whether you want to replace existing records in the mongo database; false by default
+#' @param use_db boolean: Determines whether mongoDB will be used or not; default is TRUE
+#' @param json_collection_path character: Full file path to where JSON collections will be stored
 #'
 #' @import data.table
 #' @import plyr
@@ -347,122 +464,275 @@ generate_htppFeature_htppCategory <- function(inputPath, PlateID, mongoUrl, file
 #'
 #' @export generate_htppWell
 
-generate_htppWell <- function(file_path, mongoUrl, Cell_Type, CellArea.Limit, NucleiArea.Limit, SType = "vehicle control", n_max=2000*384, rerun=FALSE, replace=FALSE){
-  #Grab all plateIDs:
-  htpp_well_trt <- mongo(collection="htpp_well_trt", url=mongoUrl, verbose=getOption("verbose"))
+generate_htppWell <- function(file_path, mongoUrl="", Cell_Type, CellArea.Limit, NucleiArea.Limit, SType = "vehicle control", n_max=2000*384, rerun=FALSE, replace=FALSE, use_db=TRUE, json_collection_path=""){
+  if(use_db==TRUE){
+    #Grab all plateIDs:
+    htpp_well_trt <- mongo(collection="htpp_well_trt", url=mongoUrl, verbose=getOption("verbose"))
 
-  List <- data.table(htpp_well_trt$find())
+    List <- data.table(htpp_well_trt$find())
+    List <- List[cell_type %in% Cell_Type,]
+    List <- unique(List[, c("plate_id", "pg_id", "cell_type")])
 
-  List <- unique(List[, c("plate_id", "pg_id", "cell_type")])
+    #------------------------------------------------------------------------------------#
+    # 2. process every plate (~ 10-12 min/plate)
+    #------------------------------------------------------------------------------------#
 
-  #------------------------------------------------------------------------------------#
-  # 2. process every plate (~ 10-12 min/plate)
-  #------------------------------------------------------------------------------------#
+    #check documents in existing collections
+    mongo(collection="htpp_well", url=mongoUrl, verbose=getOption("verbose"))$count()
+    mongo(collection="htpp_well_raw", url=mongoUrl, verbose=getOption("verbose"))$count()
+    mongo(collection="htpp_image_metadata", url=mongoUrl, verbose=getOption("verbose"))$count()
 
-  #check documents in existing collections
-  mongo(collection="htpp_well", url=mongoUrl, verbose=getOption("verbose"))$count()
-  mongo(collection="htpp_well_raw", url=mongoUrl, verbose=getOption("verbose"))$count()
-  mongo(collection="htpp_image_metadata", url=mongoUrl, verbose=getOption("verbose"))$count()
-
-  #delete collections is rerun == TRUE
-  if(rerun == TRUE){
-    mongo(collection="htpp_well", url=mongoUrl, verbose=getOption("verbose"))$drop()
-    mongo(collection="htpp_well_raw", url=mongoUrl, verbose=getOption("verbose"))$drop()
-    mongo(collection="htpp_image_metadata", url=mongoUrl, verbose=getOption("verbose"))$drop()
-  }
-
-  ##add index
-  mongo(collection="htpp_well", url=mongoUrl, verbose=getOption("verbose"))$index(add = '{"plate_id" : 1, "sample_id": 1, "trt_name":1, "pg_id":1, "stype":1, "chem_id":1}')
-
-  file_path<-paste0(file_path, "/")
-
-  for(PlateID in unique(List[, plate_id])){
-    #Need to add input file variable for Raw2Level4 function
-    FolderList <- list.files(file_path) #note that the number of folder is more than the total number of plates in PlateGroups
-
-    #find the folder that matches the PlateID
-    FolderName <- grep(PlateID, FolderList, value=T)
-
-    #Define cell line
-    cell_type <- unique(List[plate_id == PlateID, cell_type])
-    if(!(cell_type %in% Cell_Type)){
-      stop(paste0("You input for cell type, ", Cell_Type, ", does not match the ", cell_type," in htpp_well_trt for plate ",  PlateID))
+    #delete collections is rerun == TRUE
+    if(rerun == TRUE){
+      mongo(collection="htpp_well", url=mongoUrl, verbose=getOption("verbose"))$drop()
+      mongo(collection="htpp_well_raw", url=mongoUrl, verbose=getOption("verbose"))$drop()
+      mongo(collection="htpp_image_metadata", url=mongoUrl, verbose=getOption("verbose"))$drop()
     }
 
-    if(!(cell_type)%in% names(NucleiArea.Limit)){
-      stop(paste("NucleiArea.Limit does not include", cell_type, ", this is required"))
-    }
+    ##add index
+    mongo(collection="htpp_well", url=mongoUrl, verbose=getOption("verbose"))$index(add = '{"plate_id" : 1, "sample_id": 1, "trt_name":1, "pg_id":1, "stype":1, "chem_id":1}')
 
-    if(!(cell_type)%in%names(CellArea.Limit)){
-      stop(paste("CellArea.Limit does not include", cell_type, ", this is required"))
-    }
+    file_path<-paste0(file_path, "/")
 
-    if(length(FolderName)==0){
-      message("There is no folder for this plate:")
-      message(PlateID)
-    }else if(file.exists(paste0(file_path, FolderName, "/Evaluation2/Objects_Population - Cells Non-Border.txt"))){  #check if the raw file exist
-      InputPath = paste0(file_path, FolderName, "/Evaluation2/")
+    for(PlateID in unique(List[, plate_id])){
+      #Need to add input file variable for Raw2Level4 function
+      FolderList <- list.files(file_path) #note that the number of folder is more than the total number of plates in PlateGroups
 
-      if(PlateID %in% mongo(collection="htpp_well", url=mongoUrl, verbose=getOption("verbose"))$distinct(key = "plate_id") & replace == TRUE){
-        message(PlateID)
-        message(InputPath)
-        message("Plate ", PlateID, " already existed and REPLACE = TRUE. Will rerun this plate\n")
+      #find the folder that matches the PlateID
+      FolderName <- grep(PlateID, FolderList, value=T)
 
-        mongo(collection="htpp_well", url=mongoUrl, verbose=getOption("verbose"))$remove(query=mongoQuery(plate_id = PlateID))
-        mongo(collection="htpp_well_raw", url=mongoUrl, verbose=getOption("verbose"))$remove(query=mongoQuery(plate_id = PlateID))
-        mongo(collection="htpp_image_metadata", url=mongoUrl, verbose=getOption("verbose"))$remove(query=mongoQuery(plate_id = PlateID))
-
-        tic()
-        try(Raw2Level4(InputPath = InputPath, PlateID = PlateID, Cell_Type = cell_type, SType = SType, n_max = n_max, mongoUrl = mongoUrl, CellArea.Limit = CellArea.Limit[cell_type], NucleiArea.Limit = NucleiArea.Limit[cell_type]))
-        toc()
-      }else if(PlateID %in% mongo(collection="htpp_well", url=mongoUrl, verbose=getOption("verbose"))$distinct(key = "plate_id") == FALSE){
-        message(PlateID)
-        message(InputPath)
-        tic()
-        try(Raw2Level4(InputPath = InputPath, PlateID = PlateID, Cell_Type = cell_type, SType = SType, n_max = n_max, mongoUrl = mongoUrl, CellArea.Limit = CellArea.Limit[cell_type], NucleiArea.Limit = NucleiArea.Limit[cell_type]))
-        toc()
-      }else if(PlateID %in% mongo(collection="htpp_well", url=mongoUrl, verbose=getOption("verbose"))$distinct(key = "plate_id") & replace == FALSE){
-        message(PlateID)
-        message(InputPath)
-        message("Plate ", PlateID, " already existed and REPLACE = FALSE. Will skip this plate\n")
-        next
+      #Define cell line
+      cell_type <- unique(List[plate_id == PlateID, cell_type])
+      if(!(cell_type %in% Cell_Type)){
+        stop(paste0("You input for cell type, ", Cell_Type, ", does not match the ", cell_type," in htpp_well_trt for plate ",  PlateID))
       }
-    }else if(file.exists(paste0(file_path, FolderName, "/Evaluation1/Objects_Population - Cells Non-Border.txt"))) {
-      InputPath = paste0(file_path, FolderName, "/Evaluation1/")
 
-      if(PlateID %in% mongo(collection="htpp_well", url=mongoUrl, verbose=getOption("verbose"))$distinct(key = "plate_id") & replace == TRUE){
-        message(PlateID)
-        message(InputPath)
-        message("Plate ", PlateID, " already existed and REPLACE = TRUE. Will rerun this plate\n")
+      if(!(cell_type)%in% names(NucleiArea.Limit)){
+        stop(paste("NucleiArea.Limit does not include", cell_type, ", this is required"))
+      }
 
-        mongo(collection="htpp_well", url=mongoUrl, verbose=getOption("verbose"))$remove(query=mongoQuery(plate_id = PlateID))
-        mongo(collection="htpp_well_raw", url=mongoUrl, verbose=getOption("verbose"))$remove(query=mongoQuery(plate_id = PlateID))
-        mongo(collection="htpp_image_metadata", url=mongoUrl, verbose=getOption("verbose"))$remove(query=mongoQuery(plate_id = PlateID))
+      if(!(cell_type)%in%names(CellArea.Limit)){
+        stop(paste("CellArea.Limit does not include", cell_type, ", this is required"))
+      }
 
-        tic()
-        try(Raw2Level4(InputPath = InputPath, PlateID = PlateID, Cell_Type = cell_type, SType = SType, n_max = n_max, mongoUrl = mongoUrl, CellArea.Limit = CellArea.Limit[cell_type], NucleiArea.Limit = NucleiArea.Limit[cell_type]))
-        toc()
-      }else if(PlateID %in% mongo(collection="htpp_well", url=mongoUrl, verbose=getOption("verbose"))$distinct(key = "plate_id") == FALSE){
+      if(length(FolderName)==0){
+        message("There is no folder for this plate:")
         message(PlateID)
-        message(InputPath)
-        tic()
-        try(Raw2Level4(InputPath = InputPath, PlateID = PlateID, Cell_Type = cell_type, SType = SType, n_max = n_max, mongoUrl = mongoUrl, CellArea.Limit = CellArea.Limit[cell_type], NucleiArea.Limit = NucleiArea.Limit[cell_type]))
-        toc()
-      }else if(PlateID %in% mongo(collection="htpp_well", url=mongoUrl, verbose=getOption("verbose"))$distinct(key = "plate_id") & replace == FALSE){
-        message(PlateID)
-        message(InputPath)
-        message("Plate ", PlateID, " already existed and REPLACE = FALSE. Will skip this plate\n")
-        next
+      }else if(file.exists(paste0(file_path, FolderName, "/Evaluation2/Objects_Population - Cells Non-Border.txt"))){  #check if the raw file exist
+        InputPath = paste0(file_path, FolderName, "/Evaluation2/")
+
+        if(PlateID %in% mongo(collection="htpp_well", url=mongoUrl, verbose=getOption("verbose"))$distinct(key = "plate_id") & replace == TRUE){
+          message(PlateID)
+          message(InputPath)
+          message("Plate ", PlateID, " already existed and REPLACE = TRUE. Will rerun this plate\n")
+
+          mongo(collection="htpp_well", url=mongoUrl, verbose=getOption("verbose"))$remove(query=mongoQuery(plate_id = PlateID))
+          mongo(collection="htpp_well_raw", url=mongoUrl, verbose=getOption("verbose"))$remove(query=mongoQuery(plate_id = PlateID))
+          mongo(collection="htpp_image_metadata", url=mongoUrl, verbose=getOption("verbose"))$remove(query=mongoQuery(plate_id = PlateID))
+
+          tic()
+          try(Raw2Level4(InputPath = InputPath, PlateID = PlateID, Cell_Type = cell_type, SType = SType, n_max = n_max, mongoUrl = mongoUrl, CellArea.Limit = CellArea.Limit[cell_type], NucleiArea.Limit = NucleiArea.Limit[cell_type]))
+          toc()
+        }else if(PlateID %in% mongo(collection="htpp_well", url=mongoUrl, verbose=getOption("verbose"))$distinct(key = "plate_id") == FALSE){
+          message(PlateID)
+          message(InputPath)
+          tic()
+          try(Raw2Level4(InputPath = InputPath, PlateID = PlateID, Cell_Type = cell_type, SType = SType, n_max = n_max, mongoUrl = mongoUrl, CellArea.Limit = CellArea.Limit[cell_type], NucleiArea.Limit = NucleiArea.Limit[cell_type]))
+          toc()
+        }else if(PlateID %in% mongo(collection="htpp_well", url=mongoUrl, verbose=getOption("verbose"))$distinct(key = "plate_id") & replace == FALSE){
+          message(PlateID)
+          message(InputPath)
+          message("Plate ", PlateID, " already existed and REPLACE = FALSE. Will skip this plate\n")
+          next
+        }
+      }else if(file.exists(paste0(file_path, FolderName, "/Evaluation1/Objects_Population - Cells Non-Border.txt"))) {
+        InputPath = paste0(file_path, FolderName, "/Evaluation1/")
+
+        if(PlateID %in% mongo(collection="htpp_well", url=mongoUrl, verbose=getOption("verbose"))$distinct(key = "plate_id") & replace == TRUE){
+          message(PlateID)
+          message(InputPath)
+          message("Plate ", PlateID, " already existed and REPLACE = TRUE. Will rerun this plate\n")
+
+          mongo(collection="htpp_well", url=mongoUrl, verbose=getOption("verbose"))$remove(query=mongoQuery(plate_id = PlateID))
+          mongo(collection="htpp_well_raw", url=mongoUrl, verbose=getOption("verbose"))$remove(query=mongoQuery(plate_id = PlateID))
+          mongo(collection="htpp_image_metadata", url=mongoUrl, verbose=getOption("verbose"))$remove(query=mongoQuery(plate_id = PlateID))
+
+          tic()
+          try(Raw2Level4(InputPath = InputPath, PlateID = PlateID, Cell_Type = cell_type, SType = SType, n_max = n_max, mongoUrl = mongoUrl, CellArea.Limit = CellArea.Limit[cell_type], NucleiArea.Limit = NucleiArea.Limit[cell_type]))
+          toc()
+        }else if(PlateID %in% mongo(collection="htpp_well", url=mongoUrl, verbose=getOption("verbose"))$distinct(key = "plate_id") == FALSE){
+          message(PlateID)
+          message(InputPath)
+          tic()
+          try(Raw2Level4(InputPath = InputPath, PlateID = PlateID, Cell_Type = cell_type, SType = SType, n_max = n_max, mongoUrl = mongoUrl, CellArea.Limit = CellArea.Limit[cell_type], NucleiArea.Limit = NucleiArea.Limit[cell_type]))
+          toc()
+        }else if(PlateID %in% mongo(collection="htpp_well", url=mongoUrl, verbose=getOption("verbose"))$distinct(key = "plate_id") & replace == FALSE){
+          message(PlateID)
+          message(InputPath)
+          message("Plate ", PlateID, " already existed and REPLACE = FALSE. Will skip this plate\n")
+          next
+        }
       }
     }
+  }else{
+    #Grab all plateIDs:
+    if(file.exists(paste(json_collection_path,"htpp_well_trt.JSON",sep="/"))){
+      htpp_well_trt  <-data.table(fromJSON(txt=paste(json_collection_path,"htpp_well_trt.JSON",sep="/")))
+      htpp_well_trt[htpp_well_trt == "NA"] <- NA
+    } else {
+      message("htpp_well_trt.JSON not found, check json_collection_path parameter.")
+    }
+    ListColnames<-c("plate_id", "pg_id", "cell_type")
+
+    List <- unique(htpp_well_trt[, ..ListColnames])
+
+    #------------------------------------------------------------------------------------#
+    # 2. process every plate (~ 10-12 min/plate)
+    #------------------------------------------------------------------------------------#
+
+    if(rerun == TRUE){
+      htpp_well <- data.table() #make empty collections
+      htpp_well_raw <- data.table()
+      htpp_image_metadata <- data.table()
+
+      htpp_wellJSON<-toJSON(htpp_well, na="string", digits = 8) #convert empty collections
+      htpp_well_rawJSON<-toJSON(htpp_well_raw, na="string", digits = 8)
+      htpp_image_metadataJSON<-toJSON(htpp_image_metadata, na="string", digits = 8)
+
+      write(htpp_wellJSON, file=paste(json_collection_path, "htpp_well.JSON", sep="/")) #store empty collections
+      write(htpp_well_rawJSON, file=paste(json_collection_path, "htpp_well_raw.JSON", sep="/"))
+      write(htpp_image_metadataJSON, file=paste(json_collection_path, "htpp_image_metadata.JSON", sep="/"))
+
+    }else if(rerun == FALSE & file.exists(paste(json_collection_path,"htpp_well.JSON", sep = "/")) & file.exists(paste(json_collection_path,"htpp_image_metadata.JSON", sep = "/")) & file.exists(paste(json_collection_path,"htpp_well_raw.JSON", sep = "/"))){
+      htpp_well  <-data.table(fromJSON(txt=paste(json_collection_path,"htpp_well.JSON",sep="/")))
+      htpp_well[htpp_well == "NA"] <- NA
+      htpp_well_raw  <-data.table(fromJSON(txt=paste(json_collection_path,"htpp_well_raw.JSON",sep="/")))
+      htpp_well_raw[htpp_well_raw == "NA"] <- NA
+      htpp_image_metadata  <-data.table(fromJSON(txt=paste(json_collection_path,"htpp_image_metadata.JSON",sep="/")))
+      htpp_image_metadata[htpp_image_metadata == "NA"] <- NA
+    }
+
+
+    file_path<-paste0(file_path, "/")
+
+    for(PlateID in unique(List[, plate_id])){
+
+      #read in JSON files
+      htpp_well <- data.table(fromJSON(txt=paste(json_collection_path,"htpp_well.JSON",sep="/")))
+      htpp_well[htpp_well == "NA"] <- NA
+      htpp_well_raw <- data.table(fromJSON(txt=paste(json_collection_path,"htpp_well_raw.JSON",sep="/")))
+      htpp_well_raw[htpp_well_raw == "NA"] <- NA
+      htpp_image_metadata <-data.table(fromJSON(txt=paste(json_collection_path,"htpp_image_metadata.JSON",sep="/")))
+      htpp_image_metadata[htpp_image_metadata == "NA"] <- NA
+
+      #Need to add input file variable for Raw2Level4 function
+      FolderList <- list.files(file_path) #note that the number of folder is more than the total number of plates in PlateGroups
+
+      #find the folder that matches the PlateID
+      FolderName <- grep(PlateID, FolderList, value=T)
+
+      #Define cell line
+      cell_type <- unique(List[plate_id == PlateID, cell_type])
+      if(!(cell_type %in% Cell_Type)){
+        stop(paste0("You input for cell type, ", Cell_Type, ", does not match the ", cell_type," in htpp_well_trt for plate ",  PlateID))
+      }
+
+      if(!(cell_type)%in% names(NucleiArea.Limit)){
+        stop(paste("NucleiArea.Limit does not include", cell_type, ", this is required"))
+      }
+
+      if(!(cell_type)%in%names(CellArea.Limit)){
+        stop(paste("CellArea.Limit does not include", cell_type, ", this is required"))
+      }
+
+      if(length(FolderName)==0){
+        message("There is no folder for this plate:")
+        message(PlateID)
+      }else if(file.exists(paste0(file_path, FolderName, "/Evaluation2/Objects_Population - Cells Non-Border.txt"))){  #check if the raw file exist
+        InputPath = paste0(file_path, FolderName, "/Evaluation2/")
+
+        if(PlateID %in% unique(htpp_well$plate_id) & replace == TRUE){
+          message(PlateID)
+          message(InputPath)
+          message("Plate ", PlateID, " already existed and REPLACE = TRUE. Will rerun this plate\n")
+
+          htpp_well<-htpp_well[plate_id != PlateID]
+          htpp_well_raw<-htpp_well_raw[plate_id != PlateID]
+          htpp_image_metadata<-htpp_image_metadata[plate_id != PlateID]
+
+          #write to JSON
+          htpp_wellJSON<-toJSON(htpp_well, na = "string", digits = 8)
+          htpp_well_rawJSON<-toJSON(htpp_well_raw, na = "string", digits = 8)
+          htpp_image_metadataJSON<-toJSON(htpp_image_metadata, na = "string", digits = 8)
+
+          write(htpp_wellJSON, file=paste(json_collection_path, "htpp_well.JSON", sep="/"))
+          write(htpp_well_rawJSON, file=paste(json_collection_path, "htpp_well_raw.JSON", sep="/"))
+          write(htpp_image_metadataJSON, file=paste(json_collection_path, "htpp_image_metadata.JSON", sep="/"))
+
+          tic()
+          try(Raw2Level4(InputPath = InputPath, PlateID = PlateID, Cell_Type = cell_type, SType = SType, n_max = n_max, mongoUrl = "", CellArea.Limit = CellArea.Limit[cell_type], NucleiArea.Limit = NucleiArea.Limit[cell_type], use_db=FALSE, json_collection_path=json_collection_path))
+          toc()
+        }else if(PlateID %in% unique(htpp_well$plate_id) == FALSE){
+          message(PlateID)
+          message(InputPath)
+          tic()
+          try(Raw2Level4(InputPath = InputPath, PlateID = PlateID, Cell_Type = cell_type, SType = SType, n_max = n_max, mongoUrl = "", CellArea.Limit = CellArea.Limit[cell_type], NucleiArea.Limit = NucleiArea.Limit[cell_type], use_db=FALSE, json_collection_path=json_collection_path))
+          toc()
+        }else if(PlateID %in%  unique(htpp_well$plate_id) & replace == FALSE){
+          message(PlateID)
+          message(InputPath)
+          message("Plate ", PlateID, " already existed and REPLACE = FALSE. Will skip this plate\n")
+          next
+        }
+      }else if(file.exists(paste0(file_path, FolderName, "/Evaluation1/Objects_Population - Cells Non-Border.txt"))) {
+        InputPath = paste0(file_path, FolderName, "/Evaluation1/")
+
+        if(PlateID %in% unique(htpp_well$plate_id) & replace == TRUE){
+          message(PlateID)
+          message(InputPath)
+          message("Plate ", PlateID, " already existed and REPLACE = TRUE. Will rerun this plate\n")
+
+          htpp_well<-htpp_well[plate_id != PlateID]
+          htpp_well_raw<-htpp_well_raw[plate_id != PlateID]
+          htpp_image_metadata<-htpp_image_metadata[plate_id != PlateID]
+
+          #write to JSON
+          htpp_wellJSON<-toJSON(htpp_well, na = "string", digits = 8)
+          htpp_well_rawJSON<-toJSON(htpp_well_raw, na = "string", digits = 8)
+          htpp_image_metadataJSON<-toJSON(htpp_image_metadata, na = "string", digits = 8)
+
+          write(htpp_wellJSON, file=paste(json_collection_path, "htpp_well.JSON", sep="/"))
+          write(htpp_well_rawJSON, file=paste(json_collection_path, "htpp_well_raw.JSON", sep="/"))
+          write(htpp_image_metadataJSON, file=paste(json_collection_path, "htpp_image_metadata.JSON", sep="/"))
+
+          tic()
+          try(Raw2Level4(InputPath = InputPath, PlateID = PlateID, Cell_Type = cell_type, SType = SType, n_max = n_max, mongoUrl = "", CellArea.Limit = CellArea.Limit[cell_type], NucleiArea.Limit = NucleiArea.Limit[cell_type], use_db=FALSE, json_collection_path=json_collection_path))
+          toc()
+        }else if(PlateID %in% unique(htpp_well$plate_id) == FALSE){
+          message(PlateID)
+          message(InputPath)
+          tic()
+          try(Raw2Level4(InputPath = InputPath, PlateID = PlateID, Cell_Type = cell_type, SType = SType, n_max = n_max, mongoUrl = "", CellArea.Limit = CellArea.Limit[cell_type], NucleiArea.Limit = NucleiArea.Limit[cell_type], use_db=FALSE, json_collection_path=json_collection_path))
+          toc()
+        }else if(PlateID %in% unique(htpp_well$plate_id) & replace == FALSE){
+          message(PlateID)
+          message(InputPath)
+          message("Plate ", PlateID, " already existed and REPLACE = FALSE. Will skip this plate\n")
+          next
+        }
+      }
+    }
+
   }
 }
 
 
-#' Create http_well_norm, a collection of normalized well data for all plate groups
+#' Create htpp_well_norm, a collection of normalized well data for all plate groups
 #'
 #' @param mongoUrl character string: URL to connect to MongoDB for HTPP dataset; can be created using the mongoURL function in htpp.pl
 #' @param rerun boolean: rerun = TRUE will drop existing collection and reinsert; have FALSE by default
+#' @param use_db boolean: Determines whether mongoDB will be used or not; default is TRUE
+#' @param json_collection_path character: Full file path to where JSON collections will be stored
 #'
 #' @import data.table
 #' @import plyr
@@ -477,61 +747,117 @@ generate_htppWell <- function(file_path, mongoUrl, Cell_Type, CellArea.Limit, Nu
 #'
 #' @export generate_htppWellNorm
 #'
-generate_htppWellNorm<-function(mongoUrl, rerun=FALSE){
+generate_htppWellNorm<-function(mongoUrl, rerun=FALSE, use_db=TRUE, json_collection_path=""){
 
 
   #------------------------------------------------------------------------------------#
   # 1. find which plate groups are in the database
   #------------------------------------------------------------------------------------#
 
-  List4 <- mongo(collection="htpp_well", url=mongoUrl, verbose=getOption("verbose"))$find(fields='{"pg_id":1, "sample_id":1, "_id":0}')
+  if(use_db==T){
+    List4 <- mongo(collection="htpp_well", url=mongoUrl, verbose=getOption("verbose"))$find(fields='{"pg_id":1, "sample_id":1, "_id":0}')
 
-  if (length(List4) < 1){
-    stop("The htpp_well collection is empty but is required to create htpp_well_norm. Please ensure htpp_well is created before proceeding.")
+    if (length(List4) < 1){
+      stop("The htpp_well collection is empty but is required to create htpp_well_norm. Please ensure htpp_well is created before proceeding.")
+    }
+
+
+    #------------------------------------------------------------------------------------#
+    # 2. process every plate group (~ 4 min/plate group)
+    #------------------------------------------------------------------------------------#
+
+
+    mongo(collection="htpp_well_norm", url=mongoUrl, verbose=getOption("verbose"))$index(add = '{"plate_id" : 1, "sample_id": 1, "trt_name":1, "pg_id":1, "stype":1, "chem_id":1}')
+
+
+    #delete collections if rerun == TRUE
+    if(rerun == TRUE){
+      mongo(collection="htpp_well_norm", url=mongoUrl, verbose=getOption("verbose"))$drop()
+    }
+
+    for(PlateGroup in unique(List4$pg_id)){
+      message(paste("**************", PlateGroup, "**************"))
+      tic()
+      Level5(PlateGroup = as.character(PlateGroup), SType = "vehicle control", mongoUrl=mongoUrl)
+      toc()
+    }
+
+    #check documents in existing collections
+    normCount<-mongo(collection="htpp_well_norm", url=mongoUrl, verbose=getOption("verbose"))$count()
+    wellCount<-mongo(collection="htpp_well", url=mongoUrl, verbose=getOption("verbose"))$count()
+
+    if(normCount != wellCount){
+      warning(paste("Expected", wellCount, "documents in well_norm, based on htpp_well, instead there are", normCount, "documents."))
+    }
+  } else {
+    if(file.exists(paste(json_collection_path,"htpp_well.JSON",sep="/"))){
+      htpp_well <-data.table(fromJSON(txt=paste(json_collection_path,"htpp_well.JSON",sep="/")))
+      htpp_well[htpp_well == "NA"] <- NA
+    } else {
+      message("htpp_well.JSON not found, check json_collection_path parameter.")
+    }
+    ListColnames<-c("pg_id", "sample_id")
+
+    List4 <- unique(htpp_well[, ..ListColnames])
+
+    if (length(List4) < 1){
+      stop("The htpp_well collection is empty but is required to create htpp_well_norm. Please ensure htpp_well is created before proceeding.")
+    }
+
+
+    #------------------------------------------------------------------------------------#
+    # 2. process every plate group (~ 4 min/plate group)
+    #------------------------------------------------------------------------------------#
+
+
+    #overwrite the file with an empty if rerun == TRUE
+    if(rerun == TRUE){
+      htpp_well_norm <- toJSON(data.table())
+      write(htpp_well_norm, paste(json_collection_path,"htpp_well_norm.JSON", sep = "/"))
+    }
+
+    for(PlateGroup in unique(List4$pg_id)){
+      message(paste("**************", PlateGroup, "**************"))
+      tic()
+      Level5(PlateGroup = as.character(PlateGroup), SType = "vehicle control", mongoUrl="", use_db=FALSE, json_collection_path=json_collection_path)
+      toc()
+    }
+    htpp_well_norm <-data.table(fromJSON(txt=paste(json_collection_path,"htpp_well_norm.JSON",sep="/")))
+
+    #check documents in existing collections
+    normCount<-length(htpp_well_norm)
+    wellCount<-length(htpp_well)
+
+    if(normCount != wellCount){
+      warning(paste("Expected", wellCount, "documents in well_norm, based on htpp_well, instead there are", normCount, "documents."))
+    }
+
   }
-
-
-  #------------------------------------------------------------------------------------#
-  # 2. process every plate group (~ 4 min/plate group)
-  #------------------------------------------------------------------------------------#
-
-
-  mongo(collection="htpp_well_norm", url=mongoUrl, verbose=getOption("verbose"))$index(add = '{"plate_id" : 1, "sample_id": 1, "trt_name":1, "pg_id":1, "stype":1, "chem_id":1}')
-
-
-  #delete collections is rerun == TRUE
-  if(rerun == TRUE){
-    mongo(collection="htpp_well_norm", url=mongoUrl, verbose=getOption("verbose"))$drop()
-  }
-
-  for(PlateGroup in unique(List4$pg_id)){
-    message(paste("**************", PlateGroup, "**************"))
-    tic()
-    Level5(PlateGroup = as.character(PlateGroup), SType = "vehicle control", mongoUrl=mongoUrl)
-    toc()
-  }
-
-  #check documents in existing collections
-  normCount<-mongo(collection="htpp_well_norm", url=mongoUrl, verbose=getOption("verbose"))$count()
-  wellCount<-mongo(collection="htpp_well", url=mongoUrl, verbose=getOption("verbose"))$count()
-
-  if(normCount != wellCount){
-    warning(paste("Expected", wellCount, "documents in well_norm, based on htpp_well, instead there are", normCount, "documents."))
-  }
-
 
 }
 
-#' Create plots for signal strength and add NULL chemicals to htpp_well_norm
+#' Generate null chemicals before concentration-response modeling
+#'
+#' This function performs the following:
+#' Identify suitable test chemicals for Null modeling: Only include test chemicals that have at least 'n_cv_active_dose_level`concentrations from the cv_bmc MongoDB collection
+#' For these test chemicals, retrieve htpp_well_norm from the 'n_lowest_conc' concentrations and exclude wells with 'rel_cellCount'
+#' Filter highly active chemicals using Tukey's outer fence (creates a boxplot of the HTPP signal strength scores for review)
+#' Create the Null dataset by sampling without replacement
+#' Sampled Null dataset is then inserted into the htpp_well_norm MongoDB collection designated by stype == "null"
+#'
+#' The number of null chemicals that can be generated depends on the number of eligible wells on each plate and across a plate group
+#' For example, if a HTPP plate group has no cell viability issues then there should be a total of 10 Null chemicals that are generated (10 chemicals with 8 concentrations)
 #'
 #' @param n_lowest_conc integer: The number of the lowest concentrations in a concentration series for modeling Null chemical data; Default is 2 (i.e., dose_level 1 and 2)
-#' @param n_cv_active_conc integer: The number of cell viability active concentrations to be excluded; default is 6 (i.e., exclude chemicals where dose_level >= 6 are cell viability actives)
+#' @param n_cv_active_dose_level integer: Filter to include chemicals with a cell viability NOEC above a specified dose_level for null modeling; default is 6 (i.e., only include chemicals with a a CV NOEC above dose_level 6)
 #' @param rel_cellCount integer: The relative cell count threshold for excluding well data for Null chemical sampling; default is 50 (i.e., exclude wells with rel_cell_count < 50)
 #' @param plot_file_path character string: file path where signal strength plots will be created
 #' @param study_name character string: the name of the study
 #' @param mongoUrl character string: URL to connect to MongoDB for HTPP dataset; can be created using the mongoURL function in htpp.pl
 #' @param ConcList numeric vector: vector of 8 test concentrations to be used for the NULL chemicals. c(100, 10, 1, 0.1, 0.01, 0.001, 0.0001, 0.00001) by default.
 #' @param rerun boolean: rerun = TRUE will drop existing cv_well collection and reinsert; FALSE by default
+#' @param use_db boolean: Determines whether mongoDB will be used or not; default is TRUE
+#' @param json_collection_path character: Full file path to where JSON collections will be stored
 #'
 #' @import data.table
 #' @import plyr
@@ -545,188 +871,374 @@ generate_htppWellNorm<-function(mongoUrl, rerun=FALSE){
 #'
 #' @export generate_htppNullChems
 #'
-generate_htppNullChems <- function(n_lowest_conc = 2, n_cv_active_conc = 6, rel_cellCount = 50, plot_file_path, study_name, mongoUrl, ConcList=c(100, 10, 1, 0.1, 0.01, 0.001, 0.0001, 0.00001), rerun=FALSE){
+generate_htppNullChems <- function(n_lowest_conc = 2, n_cv_active_dose_level = 6, rel_cellCount = 50, plot_file_path, study_name, mongoUrl="", ConcList=c(100, 10, 1, 0.1, 0.01, 0.001, 0.0001, 0.00001), rerun=FALSE, use_db=TRUE, json_collection_path=""){
 
 
-  #---------------------------------------------------------------------------------------------#
-  # 1. Check to see if null chemicals exist in htpp_well_norm and delete if rerun == TRUE
-  #---------------------------------------------------------------------------------------------#
+  if(use_db==TRUE){
+    #---------------------------------------------------------------------------------------------#
+    # 1. Check to see if null chemicals exist in htpp_well_norm and delete if rerun == TRUE
+    #---------------------------------------------------------------------------------------------#
 
-  htpp_well_norm <-  mongo(collection="htpp_well_norm", url=mongoUrl, verbose=getOption("verbose"))
-  if(htpp_well_norm$count() < 1){
-    stop("htpp_well_norm collection is needed for well data for this function, but is empty.  Check your mongo database.")
-  }
+    htpp_well_norm <-  mongo(collection="htpp_well_norm", url=mongoUrl, verbose=getOption("verbose"))
+    if(htpp_well_norm$count() < 1){
+      stop("htpp_well_norm collection is needed for well data for this function, but is empty.  Check your mongo database.")
+    }
 
-  cv_bmc <-  mongo(collection="cv_bmc", url=mongoUrl, verbose=getOption("verbose"))
-  if(cv_bmc$count() < 1){
-    stop("cv_bmc collection is needed for biomarker data for this function, but is empty.  Check your mongo database.")
-  }
+    cv_bmc <-  mongo(collection="cv_bmc", url=mongoUrl, verbose=getOption("verbose"))
+    if(cv_bmc$count() < 1){
+      stop("cv_bmc collection is needed for biomarker data for this function, but is empty.  Check your mongo database.")
+    }
 
-  if(rerun == TRUE){
-    htpp_well_norm$remove(query=mongoQuery(stype="null")) #if putting in new null chemicals
-  }
+    if(rerun == TRUE){
+      htpp_well_norm$remove(query=mongoQuery(stype="null")) #if putting in new null chemicals
+    }
 
-  #------------------------------------------------------------------------------------#
-  # 2. Identify test samples that were not CV active at x concentration - FOR EACH CELL TYPE
-  #------------------------------------------------------------------------------------#
+    #------------------------------------------------------------------------------------#
+    # 2. Identify test samples that were not CV active at x concentration - FOR EACH CELL TYPE
+    #------------------------------------------------------------------------------------#
 
-  CVResult_all <- data.table(mongo(collection="cv_bmc", url=mongoUrl, verbose=getOption("verbose"))$find(query=mongoQuery(stype="test sample")))
+    CVResult_all <- data.table(mongo(collection="cv_bmc", url=mongoUrl, verbose=getOption("verbose"))$find(query=mongoQuery(stype="test sample")))
 
-  #FOR EACH CELL TYPE
-  null_chemicals <- list() #this will store the list of null chems for each cell type
-  i <- 1
+    #FOR EACH CELL TYPE
+    null_chemicals <- list() #this will store the list of null chems for each cell type
+    i <- 1
 
-  for(cell in unique(CVResult_all[, cell_type])){
-
-
-    CVResult <- CVResult_all[cell_type == cell]
-    cat("There are", length(unique(CVResult[, chem_id])), "chemicals in", cell, "cells\n")
-
-    ## only include chemicals that have at least 6 non CV active concentrations
-    CVResult <- CVResult %>% filter(cv_noec_dose_level>=6)
-    cat("There are", length(unique(CVResult[, chem_id])), "chemicals in", cell, "cells that have at least 6 non CV active concentrations\n")
-
-    #Pull in CPData
-    CPData <- data.table(mongo(collection="htpp_well_norm", url=mongoUrl, verbose=getOption("verbose"))$find(query=mongoQuery(stype="test sample", cell_type = cell, dose_level=c(1:n_lowest_conc))))
-
-    #retain only test chemicals that were identified in step 1 as eligible
-    CPData <- CPData %>% filter(chem_id %in% CVResult$chem_id)
-
-    #filter out wells with low cell count
-    CPData <- CPData %>% filter(rel_cell_count > 50)
-
-    message(paste0(capture.output(table(CPData$pg_id, CPData$replicate_num)), collapse = "\n"))
-
-    ##Generate matrix of Euclidean norm values for each chem_id across all plates
-    htpp_signalStrength <- lapply(unique(CPData[, chem_id]), function(x){
-      dat <- CPData[chem_id == x, ]
-      fCols<-grep(pattern="^f_", colnames(dat), value=TRUE)
-      idCols<-colnames(dat[, !c("n_fields", "n_cells_total", "n_cells_keep", "rel_cell_count")])
-      idCols<-idCols[!(idCols %in% fCols)]
-      dat_long <- melt.data.table(dat[, !c("n_fields", "n_cells_total", "n_cells_keep", "rel_cell_count"), with = FALSE],
-                                  id.vars = idCols, value.name = "norm_signal", variable.name = "htpp_feature")
-      dat_long$norm_signal<- as.numeric(dat_long$norm_signal, na.rm=TRUE)
-      euclidean_norm <- data.table(chem_id = x, norm = Euclidean_norm_vec(dat_long[, norm_signal]))
-      return(euclidean_norm)
-    })
+    for(cell in unique(CVResult_all[, cell_type])){
 
 
+      CVResult <- CVResult_all[cell_type == cell]
+      cat("There are", length(unique(CVResult[, chem_id])), "chemicals in", cell, "cells\n")
 
+      ## only include chemicals that have at least `n_cv_active_dose_level` non CV active doses
+      CVResult <- CVResult %>% filter(cv_noec_dose_level >= n_cv_active_dose_level)
+      cat("There are", length(unique(CVResult[, chem_id])), "chemicals in", cell, "cells that have at least", n_cv_active_dose_level, "non CV active doses\n")
 
-    htpp_signalStrength <- do.call(rbind, htpp_signalStrength)
+      #Pull in CPData
+      CPData <- data.table(mongo(collection="htpp_well_norm", url=mongoUrl, verbose=getOption("verbose"))$find(query=mongoQuery(stype="test sample", cell_type = cell, dose_level=c(1:n_lowest_conc))))
 
-
-
-
-    ##What is the outer fence of the signal strength data
-    message(paste("the outer fences of the signal strength data for", cell, "are", outerFences(input_vector = htpp_signalStrength[, norm]), ".  "))
-
-    ##Plot distribution of points
-    p <- ggplot(data = htpp_signalStrength, aes(x = norm)) +
-      geom_boxplot() +
-      scale_x_log10() +
-      geom_vline(xintercept = outerFences(input_vector = htpp_signalStrength[, norm])[2], linetype = "dashed") +
-      geom_vline(xintercept = outerFences(input_vector = htpp_signalStrength[, norm])[1], linetype = "dashed") +
-      theme_bw() +
-      ggtitle("HTPP Feature Signal Strength", subtitle = "Dashed line is the Tukey's Outer Fence")
-
-    png(filename = paste0(plot_file_path, "/", study_name, "_", cell, "_",  "signalStrengthBoxplot.png"), res = 200, width = 6, height = 3, units = "in")
-    print(p)
-    dev.off()
-
-    ##Filter chemicals based on Tukey's outer fence of signal strength
-    null_chems <- htpp_signalStrength[norm <= outerFences(input_vector = htpp_signalStrength[, norm])[2],]
-    null_chems <- null_chems[norm >= outerFences(input_vector = htpp_signalStrength[, norm])[1],]
-    null_chems <- data.table(chem_id = null_chems[, chem_id], cell_type = cell)
-
-    cat("For", cell, "cells there are", length(null_chems[, chem_id]), "null chemicals\n")
-
-    null_chemicals[[i]] <- null_chems
-    i <- i+1
-
-  } #for each cell type
-
-  #Retrieve all null chemicals into data.table
-  null_chemicals <- data.table(do.call(rbind, null_chemicals))
-
-  #------------------------------------------------------------------------------------#
-  # 3. Retrieve CP data from db & prepare for null chemical generation - FOR EACH CELL TYPE AND PLATE GROUP
-  #------------------------------------------------------------------------------------#
-
-  CPData_all = data.table(mongo(collection="htpp_well_norm", url=mongoUrl, verbose=getOption("verbose"))$find(query=mongoQuery(stype="test sample", dose_level=c(1,2))))#11377 obs
-
-  for(cell in unique(CPData_all[, cell_type])){
-    for(PG in unique(CPData_all[cell_type == cell, pg_id])){
-
-      CPData <- CPData_all[cell_type == cell & pg_id == PG]
-
-      #retain only test samples that were identified in step 1 as eligible
-      CPData <- CPData %>% filter(chem_id %in% null_chemicals[cell_type == cell, chem_id])
+      #retain only test chemicals that were identified in step 1 as eligible
+      CPData <- CPData %>% filter(chem_id %in% CVResult$chem_id)
 
       #filter out wells with low cell count
-      CPData <- CPData %>% filter(rel_cell_count>50)
+      CPData <- CPData %>% filter(rel_cell_count > 50)
 
-      cat("For", cell, "cells", "and plate group", PG, "there should be a total of", floor(min(CPData[, .N, by = c("plate_id", "replicate_num")]$N)/length(ConcList)), "null chemicals\n")
+      message(paste0(capture.output(table(CPData$pg_id, CPData$replicate_num)), collapse = "\n"))
 
-      ## Evaluate how may chemicals are eligible for NULL modeling on each plate group.
-      ## Multiply the minimum number of eligible chemicals on any plate group by 2, representing the lowest 2 dose levels. (note this has already been done here)
-      ## Divide that number by 8, representing an eight point concentration series.
-      ## Example: We have a minimum of 82 chemicals across the 4 plates. 82 / 8 = 10.25. Round down to 10 for the number of null chemicals
-      ## This may not be a useful metric for datasets without CV-specific data. See below for alternative calculation.
 
-      null_chems <- floor(min(CPData[, .N, by = c("plate_id", "replicate_num")]$N)/length(ConcList))
+      ##Generate matrix of Euclidean norm values for each chem_id across all plates
+      htpp_signalStrength <- lapply(unique(CPData[, chem_id]), function(x){
+        dat <- CPData[chem_id == x, ]
+        fCols<-grep(pattern="^f_", colnames(dat), value=TRUE)
+        idCols<-colnames(dat[, !c("n_fields", "n_cells_total", "n_cells_keep", "rel_cell_count")])
+        idCols<-idCols[!(idCols %in% fCols)]
+        dat_long <- melt.data.table(dat[, !c("n_fields", "n_cells_total", "n_cells_keep", "rel_cell_count"), with = FALSE],
+                                    id.vars = idCols, value.name = "norm_signal", variable.name = "htpp_feature")
+        dat_long$norm_signal<- as.numeric(dat_long$norm_signal, na.rm=TRUE)
+        euclidean_norm <- data.table(chem_id = x, norm = Euclidean_norm_vec(dat_long[, norm_signal]))
+        return(euclidean_norm)
+      })
 
-      ## delete unneeded meta information
-      colnames(CPData)[ which(!grepl("^f_", colnames(CPData))) ]
-      CPData = CPData %>% dplyr::mutate(stype=NA, chem_id="", dose_level=NA, trt_name="", conc=NA)
 
-      #------------------------------------------------------------------------------------#
-      # 4. Generate null chemicals
-      #------------------------------------------------------------------------------------#
+      htpp_signalStrength <- do.call(rbind, htpp_signalStrength)
 
-      #########  Sample 10 chemicals from each plate
-      set.seed(126) #adding seed for reproducibility
-      NullSet <- CPData %>%
-        group_by(plate_id) %>% dplyr::sample_n(null_chems*length(ConcList), replace=F) %>%
-        dplyr::mutate(chem_id = paste0("lowest2conc_1", base::sample(x=rep(letters[1:null_chems], length(ConcList)), replace=F))) %>%
-        group_by(plate_id, chem_id) %>%
-        dplyr::mutate(conc = base::sample(x=ConcList, replace=F),
-                      dose_level = rank(conc),
-                      stype = "null",
-                      trt_name = paste(pg_id, chem_id, dose_level, sep="_")) %>%
-        dplyr::arrange(pg_id, plate_id, chem_id, dose_level) %>% ungroup()
+      ##What is the outer fence of the signal strength data
+      message(paste("the outer fences of the signal strength data for", cell, "are:", outerFences(input_vector = htpp_signalStrength[, norm])[1], "and", outerFences(input_vector = htpp_signalStrength[, norm])[2]))
 
-      message(paste0(capture.output(table(NullSet$plate_id, NullSet$conc)), collapse = "\n"))
-      #------------------------------------------------------------------------------------#
-      # 5. Write data to collection
-      #------------------------------------------------------------------------------------#
+      ##Plot distribution of points
+      p <- ggplot(data = htpp_signalStrength, aes(x = norm)) +
+        geom_boxplot() +
+        scale_x_log10() +
+        geom_vline(xintercept = outerFences(input_vector = htpp_signalStrength[, norm])[2], linetype = "dashed") +
+        geom_vline(xintercept = outerFences(input_vector = htpp_signalStrength[, norm])[1], linetype = "dashed") +
+        theme_bw() +
+        ggtitle("HTPP Feature Signal Strength", subtitle = "Dashed line is the Tukey's Outer Fence")
 
-      tic()
-      for(i in 1:dim(NullSet)[1]){
-        #print(i)
-        newDocument = NullSet[i,]
-        htpp_well_norm$insert(newDocument, auto_unbox=TRUE, na = "null")
-      }
-      toc()
+      png(filename = paste0(plot_file_path, "/", study_name, "_", cell, "_",  "signalStrengthBoxplot.png"), res = 200, width = 6, height = 3, units = "in")
+      print(p)
+      dev.off()
 
-      cat("A total of", dim(NullSet)[1], "null chemical documents were added to htpp_well_norm for", cell, "cells\n\n\n")
-    } #for each plate group
-  } #for each cell type
+      ##Filter chemicals based on Tukey's outer fence of signal strength
+      null_chems <- htpp_signalStrength[norm <= outerFences(input_vector = htpp_signalStrength[, norm])[2],]
+      null_chems <- null_chems[norm >= outerFences(input_vector = htpp_signalStrength[, norm])[1],]
+      null_chems <- data.table(chem_id = null_chems[, chem_id], cell_type = cell)
 
-  #------------------------------------------------------------------------------------#
-  # 6. Check to see that null chemicals were added
-  #------------------------------------------------------------------------------------#
-  message(paste("There are a total of", htpp_well_norm$count(query = mongoQuery(stype = "null")), "null chemical wells in htpp_well_norm."))
-  message(paste("There are", htpp_well_norm$count(query = mongoQuery(stype = c("reference chemical", "vehicle control", "test sample", "viability positive control"))), "wells treated with chemicals that are either reference chemicals, vehicle controls, test samples or viability positive controls in htpp_well_norm."))
-  message(paste("There are", htpp_well_norm$count(), "total wells after normalization.  There should be", htpp_well_norm$count(query = mongoQuery(stype = "null"))+htpp_well_norm$count(query = mongoQuery(stype = c("reference chemical", "vehicle control", "test sample", "viability positive control"))), "total wells, based on the sum of the prior two totals."))
+      cat("For", cell, "cells there are", length(null_chems[, chem_id]), "chemicals available for null chemical modeling \n")
+
+      null_chemicals[[i]] <- null_chems
+      i <- i+1
+
+    } #for each cell type
+
+    #Retrieve all null chemicals into data.table
+    null_chemicals <- data.table(do.call(rbind, null_chemicals))
+
+    #------------------------------------------------------------------------------------#
+    # 3. Retrieve CP data from db & prepare for null chemical generation - FOR EACH CELL TYPE AND PLATE GROUP
+    #------------------------------------------------------------------------------------#
+
+    CPData_all = data.table(mongo(collection="htpp_well_norm", url=mongoUrl, verbose=getOption("verbose"))$find(query=mongoQuery(stype="test sample", dose_level=c(1,2))))#11377 obs
+
+    for(cell in unique(CPData_all[, cell_type])){
+      for(PG in unique(CPData_all[cell_type == cell, pg_id])){
+
+        CPData <- CPData_all[cell_type == cell & pg_id == PG]
+
+        #retain only test samples that were identified in step 1 as eligible
+        CPData <- CPData %>% filter(chem_id %in% null_chemicals[cell_type == cell, chem_id])
+
+        #filter out wells with low cell count
+        CPData <- CPData %>% filter(rel_cell_count>50)
+
+        cat("For", cell, "cells", "and plate group", PG, "there should be a total of", floor(min(CPData[, .N, by = c("plate_id", "replicate_num")]$N)/length(ConcList)), "null chemicals with", length(ConcList), "total concentrations \n")
+
+        ## Evaluate how may chemicals are eligible for NULL modeling on each plate group.
+        ## Multiply the minimum number of eligible chemicals on any plate group by 2, representing the lowest 2 dose levels. (note this has already been done here)
+        ## Divide that number by 8, representing an eight point concentration series.
+        ## Example: We have a minimum of 82 chemicals across the 4 plates. 82 / 8 = 10.25. Round down to 10 for the number of null chemicals
+        ## This may not be a useful metric for datasets without CV-specific data. See below for alternative calculation.
+
+        null_chems <- floor(min(CPData[, .N, by = c("plate_id", "replicate_num")]$N)/length(ConcList))
+
+        ## delete unneeded meta information
+        colnames(CPData)[ which(!grepl("^f_", colnames(CPData))) ]
+        CPData = CPData %>% dplyr::mutate(stype=NA, chem_id="", dose_level=NA, trt_name="", conc=NA)
+
+        #------------------------------------------------------------------------------------#
+        # 4. Generate null chemicals
+        #------------------------------------------------------------------------------------#
+
+        #########  Sample 10 chemicals from each plate
+        set.seed(126) #adding seed for reproducibility
+        NullSet <- CPData %>%
+          group_by(plate_id) %>% dplyr::sample_n(null_chems*length(ConcList), replace=F) %>%
+          dplyr::mutate(chem_id = paste0("lowest2conc_1", base::sample(x=rep(letters[1:null_chems], length(ConcList)), replace=F))) %>%
+          group_by(plate_id, chem_id) %>%
+          dplyr::mutate(conc = base::sample(x=ConcList, replace=F),
+                        dose_level = rank(conc),
+                        stype = "null",
+                        trt_name = paste(pg_id, chem_id, dose_level, sep="_")) %>%
+          dplyr::arrange(pg_id, plate_id, chem_id, dose_level) %>% ungroup()
+
+        message(paste0(capture.output(table(NullSet$plate_id, NullSet$conc)), collapse = "\n"))
+        #------------------------------------------------------------------------------------#
+        # 5. Write data to collection
+        #------------------------------------------------------------------------------------#
+
+        tic()
+        for(i in 1:dim(NullSet)[1]){
+          #print(i)
+          newDocument = NullSet[i,]
+          htpp_well_norm$insert(newDocument, auto_unbox=TRUE, na = "null")
+        }
+        toc()
+
+        cat("A total of", dim(NullSet)[1], "null chemical documents were added to htpp_well_norm for", cell, "cells\n\n\n")
+      } #for each plate group
+    } #for each cell type
+
+    #------------------------------------------------------------------------------------#
+    # 6. Check to see that null chemicals were added
+    #------------------------------------------------------------------------------------#
+    message(paste("There are a total of", htpp_well_norm$count(query = mongoQuery(stype = "null")), "null chemical wells in htpp_well_norm."))
+    message(paste("There are", htpp_well_norm$count(query = mongoQuery(stype = c("reference chemical", "vehicle control", "test sample", "viability positive control"))), "wells treated with chemicals that are either reference chemicals, vehicle controls, test samples or viability positive controls in htpp_well_norm."))
+    message(paste("There are", htpp_well_norm$count(), "total wells after normalization.  There should be", htpp_well_norm$count(query = mongoQuery(stype = "null"))+htpp_well_norm$count(query = mongoQuery(stype = c("reference chemical", "vehicle control", "test sample", "viability positive control"))), "total wells, based on the sum of the prior two totals."))
+  }else{
+    #---------------------------------------------------------------------------------------------#
+    # 1. Check to see if null chemicals exist in htpp_well_norm and delete if rerun == TRUE
+    #---------------------------------------------------------------------------------------------#
+
+    if(file.exists(paste(json_collection_path,"htpp_well_norm.JSON",sep="/"))){
+      htpp_well_norm  <-data.table(fromJSON(txt=paste(json_collection_path,"htpp_well_norm.JSON",sep="/")))
+      htpp_well_norm[htpp_well_norm == "NA"] <- NA
+    } else {
+      stop("htpp_well_norm collection is needed for well data for this function, but is empty.  Check your json_collection_path parameter.")
+    }
+
+    if(file.exists(paste(json_collection_path,"cv_bmc.JSON",sep="/"))){
+      cv_bmc  <-data.table(fromJSON(txt=paste(json_collection_path,"cv_bmc.JSON",sep="/")))
+      cv_bmc[cv_bmc == "NA"] <- NA
+    } else {
+      stop("cv_bmc collection is needed for well data for this function, but is empty.  Check your json_collection_path parameter.")
+    }
+
+    if(rerun == TRUE){
+      htpp_well_norm<-htpp_well_norm[stype!="null"]#if putting in new null chemicals
+    }
+
+
+    #------------------------------------------------------------------------------------#
+    # 2. Identify test samples that were not CV active at x concentration - FOR EACH CELL TYPE
+    #------------------------------------------------------------------------------------#
+
+    CVResult_all <- cv_bmc[stype=="test sample"]
+
+
+    #FOR EACH CELL TYPE
+    null_chemicals <- list() #this will store the list of null chems for each cell type
+    i <- 1
+
+    for(cell in unique(CVResult_all[, cell_type])){
+
+
+      CVResult <- CVResult_all[cell_type == cell]
+      cat("There are", length(unique(CVResult[, chem_id])), "chemicals in", cell, "cells\n")
+
+      ## only include chemicals that have at least `n_cv_active_dose_level` non CV active concentrations
+      CVResult <- CVResult %>% filter(cv_noec_dose_level >= n_cv_active_dose_level)
+      cat("There are", length(unique(CVResult[, chem_id])), "chemicals in", cell, "cells that have at least", n_cv_active_dose_level, "non CV active concentrations\n")
+
+      #Pull in CPData
+      CPData <- htpp_well_norm %>% filter(stype=="test sample" & cell_type==cell & dose_level %in% c(1:n_lowest_conc))
+
+      #retain only test chemicals that were identified in step 1 as eligible
+      CPData <- CPData %>% filter(chem_id %in% CVResult$chem_id)
+
+      #filter out wells with low cell count
+      CPData <- CPData %>% filter(rel_cell_count > 50)
+
+      message(paste0(capture.output(table(CPData$pg_id, CPData$replicate_num)), collapse = "\n"))
+
+      ##Generate matrix of Euclidean norm values for each chem_id across all plates
+      htpp_signalStrength <- lapply(unique(CPData[, chem_id]), function(x){
+        dat <- CPData[chem_id == x, ]
+        fCols<-grep(pattern="^f_", colnames(dat), value=TRUE)
+        idCols<-colnames(dat[, !c("n_fields", "n_cells_total", "n_cells_keep", "rel_cell_count")])
+        idCols<-idCols[!(idCols %in% fCols)]
+        dat[, c(fCols)] <- lapply(dat[, c(fCols), with = FALSE], as.numeric) #force all 'f_' columns to be numeric class
+        dat_long <- melt.data.table(dat[, !c("n_fields", "n_cells_total", "n_cells_keep", "rel_cell_count"), with = FALSE],
+                                    id.vars = idCols, value.name = "norm_signal", variable.name = "htpp_feature")
+        dat_long$norm_signal<- as.numeric(dat_long$norm_signal, na.rm=TRUE)
+        euclidean_norm <- data.table(chem_id = x, norm = Euclidean_norm_vec(dat_long[, norm_signal]))
+        return(euclidean_norm)
+      })
+
+      htpp_signalStrength <- do.call(rbind, htpp_signalStrength)
+
+      ##What is the outer fence of the signal strength data
+      message(paste("the outer fences of the signal strength data for", cell, "are:", outerFences(input_vector = htpp_signalStrength[, norm])[1], "and", outerFences(input_vector = htpp_signalStrength[, norm])[2]))
+
+      ##Plot distribution of points
+      p <- ggplot(data = htpp_signalStrength, aes(x = norm)) +
+        geom_boxplot() +
+        scale_x_log10() +
+        geom_vline(xintercept = outerFences(input_vector = htpp_signalStrength[, norm])[2], linetype = "dashed") +
+        geom_vline(xintercept = outerFences(input_vector = htpp_signalStrength[, norm])[1], linetype = "dashed") +
+        theme_bw() +
+        ggtitle("HTPP Feature Signal Strength", subtitle = "Dashed line is the Tukey's Outer Fence")
+
+      png(filename = paste0(plot_file_path, "/", study_name, "_", cell, "_",  "signalStrengthBoxplot.png"), res = 200, width = 6, height = 3, units = "in")
+      print(p)
+      dev.off()
+
+      ##Filter chemicals based on Tukey's outer fence of signal strength
+      null_chems <- htpp_signalStrength[norm <= outerFences(input_vector = htpp_signalStrength[, norm])[2],]
+      null_chems <- null_chems[norm >= outerFences(input_vector = htpp_signalStrength[, norm])[1],]
+      null_chems <- data.table(chem_id = null_chems[, chem_id], cell_type = cell)
+
+      cat("For", cell, "cells there are", length(null_chems[, chem_id]), "chemicals available for null chemical modeling \n")
+
+      null_chemicals[[i]] <- null_chems
+      i <- i+1
+
+    } #for each cell type
+
+    #Retrieve all null chemicals into data.table
+    null_chemicals <- data.table(do.call(rbind, null_chemicals))
+
+    #------------------------------------------------------------------------------------#
+    # 3. Retrieve CP data from db & prepare for null chemical generation - FOR EACH CELL TYPE AND PLATE GROUP
+    #------------------------------------------------------------------------------------#
+
+    CPData_all <- htpp_well_norm %>% filter(stype=="test sample" & dose_level %in% c(1,2))
+    cellNorm <- data.table()
+
+    for(cell in unique(CPData_all[, cell_type])){
+      for(PG in unique(CPData_all[cell_type == cell, pg_id])){
+
+        CPData <- CPData_all[cell_type == cell & pg_id == PG]
+
+        #retain only test samples that were identified in step 1 as eligible
+        CPData <- CPData %>% filter(chem_id %in% null_chemicals[cell_type == cell, chem_id])
+
+        #filter out wells with low cell count
+        CPData <- CPData %>% filter(rel_cell_count>50)
+
+        cat("For", cell, "cells", "and plate group", PG, "there should be a total of", floor(min(CPData[, .N, by = c("plate_id", "replicate_num")]$N)/length(ConcList)), "null chemicals with", length(ConcList), "total concentrations \n")
+
+        ## Evaluate how may chemicals are eligible for NULL modeling on each plate group.
+        ## Multiply the minimum number of eligible chemicals on any plate group by 2, representing the lowest 2 dose levels. (note this has already been done here)
+        ## Divide that number by 8, representing an eight point concentration series.
+        ## Example: We have a minimum of 82 chemicals across the 4 plates. 82 / 8 = 10.25. Round down to 10 for the number of null chemicals
+        ## This may not be a useful metric for datasets without CV-specific data. See below for alternative calculation.
+
+        null_chems <- floor(min(CPData[, .N, by = c("plate_id", "replicate_num")]$N)/length(ConcList))
+
+        ## delete unneeded meta information
+        colnames(CPData)[ which(!grepl("^f_", colnames(CPData))) ]
+        CPData = CPData %>% dplyr::mutate(stype=NA, chem_id="", dose_level=NA, trt_name="", conc=NA)
+
+        #------------------------------------------------------------------------------------#
+        # 4. Generate null chemicals
+        #------------------------------------------------------------------------------------#
+
+        #########  Sample 10 chemicals from each plate
+        set.seed(126) #adding seed for reproducibility
+        NullSet <- CPData %>%
+          group_by(plate_id) %>% dplyr::sample_n(null_chems*length(ConcList), replace=F) %>%
+          dplyr::mutate(chem_id = paste0("lowest2conc_1", base::sample(x=rep(letters[1:null_chems], length(ConcList)), replace=F))) %>%
+          group_by(plate_id, chem_id) %>%
+          dplyr::mutate(conc = base::sample(x=ConcList, replace=F),
+                        dose_level = rank(conc),
+                        stype = "null",
+                        trt_name = paste(pg_id, chem_id, dose_level, sep="_")) %>%
+          dplyr::arrange(pg_id, plate_id, chem_id, dose_level) %>% ungroup()
+
+        message(paste0(capture.output(table(NullSet$plate_id, NullSet$conc)), collapse = "\n"))
+        #------------------------------------------------------------------------------------#
+        # 5. Write data to collection
+        #------------------------------------------------------------------------------------#
+
+        plateNorm <- data.table()
+        tic()
+        for(i in 1:dim(NullSet)[1]){
+          #print(i)
+          newDocument <- NullSet[i,]
+          plateNorm <- rbind(plateNorm, newDocument)
+        }
+        toc()
+
+
+
+        cat("A total of", dim(NullSet)[1], "null chemical documents were added to htpp_well_norm for", cell, "cells\n\n\n")
+      } #for each plate group
+      cellNorm<-rbind(cellNorm, plateNorm)
+    } #for each cell type
+
+    htpp_well_norm <- rbind(htpp_well_norm,cellNorm)
+    normJSON<-toJSON(htpp_well_norm, na="string", digits = 8)
+    write(normJSON, file=paste(json_collection_path,"htpp_well_norm.JSON",sep="/"))
+
+    #------------------------------------------------------------------------------------#
+    # 6. Check to see that null chemicals were added
+    #------------------------------------------------------------------------------------#
+    nullcount<-dim(htpp_well_norm[stype=="null"])[1]
+    actcount<-dim(htpp_well_norm[stype %in% c("reference chemical", "vehicle control", "test sample", "viability positive control")])[1]
+    totalcount<-dim(htpp_well_norm)[1]
+    message(paste("There are a total of", nullcount, "null chemical wells in htpp_well_norm."))
+    message(paste("There are", actcount, "wells treated with chemicals that are either reference chemicals, vehicle controls, test samples or viability positive controls in htpp_well_norm."))
+    message(paste("There are", totalcount, "total wells after normalization.  There should be", nullcount+actcount, "total wells, based on the sum of the prior two totals."))
+  }
 }
 
 #' create htpp_profile collection
+#' This collection is mainly used for data visualization.
+#' Computes the median value across all features for a given chemical treatment.
 #'
-#' @param n_cells  numeric: Minimum threshold for the number of cells to keep for filtering
-#' @param relative_cellCount numeric: Minimum threshold of the count of relative number of cells to use for filtering
+#' @param minObjects  numeric: Minimum threshold for the number of cells to keep for filtering
 #' @param mongoUrl character string: URL to connect to MongoDB for HTPP dataset; can be created using the mongoURL function in htpp.pl
 #' @param rerun boolean: rerun = TRUE will drop existing collection and reinsert; FALSE by default
+#' @param use_db boolean: Determines whether mongoDB will be used or not; default is TRUE
+#' @param json_collection_path character: Full file path to where JSON collections will be stored
 #'
 #' @import data.table
 #' @import plyr
@@ -741,103 +1253,258 @@ generate_htppNullChems <- function(n_lowest_conc = 2, n_cv_active_conc = 6, rel_
 #'
 #' @export generate_htppProfile
 #'
-generate_htppProfile <- function(n_cells, relative_cellCount, mongoUrl, rerun=FALSE){
-  #------------------------------------------------------------------------------------#
-  # 1. Setup
-  #------------------------------------------------------------------------------------#
 
+generate_htppProfile <- function(minObjects, mongoUrl, rerun=FALSE, use_db=TRUE, json_collection_path=""){
+  if(use_db==TRUE){
+    #------------------------------------------------------------------------------------#
+    # 1. Setup
+    #------------------------------------------------------------------------------------#
 
+    htpp_profile <- mongo(collection="htpp_profile", url=mongoUrl, verbose=getOption("verbose"))
+    htpp_well_norm <- mongo(collection="htpp_well_norm", url=mongoUrl, verbose=getOption("verbose"))
+    htpp_well_trt <- mongo(collection="htpp_well_trt", url=mongoUrl, verbose=getOption("verbose"))
+    cv_bmc <- mongo(collection="cv_bmc", url=mongoUrl, verbose=getOption("verbose"))
 
-
-  htpp_profile <- mongo(collection="htpp_profile", url=mongoUrl, verbose=getOption("verbose"))
-  htpp_well_norm <- mongo(collection="htpp_well_norm", url=mongoUrl, verbose=getOption("verbose"))
-  htpp_well_trt <- mongo(collection="htpp_well_trt", url=mongoUrl, verbose=getOption("verbose"))
-
-
-
-  if(htpp_well_norm$count()<1){
-    stop("The htpp_well_norm collection is empty but is required to create htpp_profile. Please ensure htpp_well_norm is created before proceeding.")
-  }
-
-  if (htpp_well_trt$count()<1){
-    stop("The htpp_well_trt collection is empty but is required to create htpp_profile. Please ensure htpp_well_norm is created before proceeding.")
-  }
-
-  message(htpp_profile$count())
-
-  #delete documents in collection if rerun == TRUE
-  if(rerun == TRUE){
-    htpp_profile$drop()
-  }
-
-
-  #------------------------------------------------------------------------------------#
-  # 2. Insert into htpp_profile by cell type
-  #------------------------------------------------------------------------------------#
-  fieldsOfTrt<-htpp_well_trt$find(fields='{"pg_id":1, "sample_id":1, "_id":0}')
-  PGList = as.character(unique(fieldsOfTrt$pg_id))
-
-
-  for(PG in PGList){
-
-    if (PG == PGList[1]){
-      FeatureList <- mongo(collection="htpp_feature", url=mongoUrl)$find() %>% filter(!is.na(feature_id))
-      mongo(collection="htpp_profile",  url=mongoUrl, verbose=getOption("verbose"))$index(add = '{  "pg_id":1, "stype":1, "cell_type":1, "chem_id":1, "n_wells":1,
-                                                                                           "dose_level":1, "conc":1, "trt_name":1 }')
+    if(cv_bmc$count()<1){
+      stop("The cv_bmc collection is empty but is required to create htpp_profile. Please ensure cv_bmc is created before proceeding.")
     }
 
-    message(paste("*****", PG, "******"))
-    tic()
-    Input <- data.table(mongo(collection="htpp_well_norm", url=mongoUrl)$find(query=mongoQuery(pg_id=PG, stype=c("reference chemical", "test sample"))))
-    toc()
+    if(htpp_well_norm$count()<1){
+      stop("The htpp_well_norm collection is empty but is required to create htpp_profile. Please ensure htpp_well_norm is created before proceeding.")
+    }
 
-    for(cell in unique(Input$cell_type)){
-      message(paste("Generating htpp_profile input for", cell, "cells", sep = " "))
+    if (htpp_well_trt$count()<1){
+      stop("The htpp_well_trt collection is empty but is required to create htpp_profile. Please ensure htpp_well_norm is created before proceeding.")
+    }
 
-      Data <- Input[cell_type == cell, ] %>% dplyr::mutate(use.me = (n_cells_keep>n_cells & rel_cell_count>relative_cellCount)) %>%
-        group_by(pg_id, stype, cell_type, chem_id, dose_level, conc, conc_unit, trt_name)
+    message(htpp_profile$count())
 
-      N <- Data %>% dplyr::summarise(n_wells = sum(use.me, na.rm=T))
+    #delete documents in collection if rerun == TRUE
+    if(rerun == TRUE){
+      htpp_profile$drop()
+    }
 
-      tic()
-      Profiles <- Data %>% filter(use.me) %>%
-        summarise_at(.vars = FeatureList$feature_name_mongo, .funs = "median", na.rm=T) %>%
-        dplyr::mutate_at(.vars = FeatureList$feature_name_mongo, .funs = "round", 3)
-      toc()
 
-      Output <- N %>% dplyr::left_join(Profiles)
+    #------------------------------------------------------------------------------------#
+    # 2. Insert into htpp_profile by cell type
+    #------------------------------------------------------------------------------------#
+    fieldsOfTrt<-htpp_well_trt$find(fields='{"pg_id":1, "sample_id":1, "_id":0}')
+    PGList = as.character(unique(fieldsOfTrt$pg_id))
 
-      htpp_profile <- mongo(collection="htpp_profile", url=mongoUrl, verbose=getOption("verbose"))
 
-      tic()
-      #if there are already a documents for this plate group and cell type, delete it
-      if(length(htpp_profile$find(query=mongoQuery(pg_id = PG, cell_type = cell), fields='{"_id" : 1}')) > 0){
-        cat("Entry for plate group", PG, "and", cell, "cells already existed!!!\n")
-        htpp_profile$remove(query=mongoQuery(pg_id = PG, cell_type = cell))
+    for(PG in PGList){
+
+      if (PG == PGList[1]){
+        FeatureList <- mongo(collection="htpp_feature", url=mongoUrl)$find() %>% filter(!is.na(feature_id))
+        mongo(collection="htpp_profile",  url=mongoUrl, verbose=getOption("verbose"))$index(add = '{  "pg_id":1, "stype":1, "cell_type":1, "chem_id":1, "n_wells":1,
+                                                                                           "dose_level":1, "conc":1, "trt_name":1 }')
       }
 
-      for(iRow in 1:dim(Output)[1]){
-        newDocument = Output[iRow,]
-        htpp_profile$insert(newDocument, auto_unbox=TRUE, na = "null")
-      }#for each well
+      message(paste("*****", PG, "******"))
+      tic()
+      Input <- data.table(mongo(collection="htpp_well_norm", url=mongoUrl)$find(query=mongoQuery(pg_id=PG, stype=c("reference chemical", "test sample"))))
       toc()
 
-      cat("Inserted", dim(Output)[1], "documents into htpp_profile for", cell, "cells\n")
-    } #for each cell type
+      ## get CV data
+      CV_BMC_all <- data.table(mongo(collection = "cv_bmc", url = mongoUrl, verbose = getOption("verbose"))$find(query = mongoQuery(pg_id = PG)))
+      CV_BMC_all <- CV_BMC_all %>% select(pg_id, stype, cell_type, chem_id, cv_noec_dose_level, cv_flag)
 
-    if(PG=="1"){
-      mongo(collection="htpp_profile",  url=mongoUrl, verbose=getOption("verbose"))$index(add = '{  "pg_id":1, "stype":1, "cell_type":1, "chem_id":1, "n_wells":1,
+      for(cell in unique(Input$cell_type)){
+        message(paste("Generating htpp_profile input for", cell, "cells", sep = " "))
+
+        #filter by cell type -- copied from htpp_tcpl code
+        CV_BMC <- as.data.frame(CV_BMC_all[cell_type == cell, ])
+        Input <- Input[cell_type == cell, ]
+
+        #attach -- copied from htpp_tcpl code
+        Input <- Input %>% left_join(CV_BMC) %>%
+          #modify the information for null chemicals, as they can not be properly processed otherwise
+          dplyr::mutate(cv_noec_dose_level = ifelse(stype == "null", 8, cv_noec_dose_level),
+                        cv_flag = ifelse(stype == "null", F, cv_flag))
+
+        #added htpp_tcpl `cv_noec_dose_level + 1` logic
+        Data <- Input[cell_type == cell, ] %>% dplyr::mutate(use.me = (n_cells_keep>minObjects & dose_level <= (cv_noec_dose_level + 1))) %>%
+          group_by(pg_id, stype, cell_type, chem_id, dose_level, conc, conc_unit, trt_name)
+
+        #reorder rows
+        feature_cols <- colnames(Data)[str_detect(colnames(Data), "f_")]
+        meta_cols <- colnames(Data)[!c(str_detect(colnames(Data), "f_"))]
+        Data <- Data[, c(meta_cols, feature_cols)]
+
+        N <- Data %>% dplyr::summarise(n_wells = sum(use.me, na.rm=T))
+
+        tic()
+        Profiles <- Data %>% filter(use.me) %>%
+          summarise_at(.vars = FeatureList$feature_name_mongo, .funs = "median", na.rm=T) %>%
+          dplyr::mutate_at(.vars = FeatureList$feature_name_mongo, .funs = "round", 3)
+        toc()
+
+        Output <- N %>% dplyr::left_join(Profiles)
+
+        htpp_profile <- mongo(collection="htpp_profile", url=mongoUrl, verbose=getOption("verbose"))
+
+        tic()
+        #if there are already a documents for this plate group and cell type, delete it
+        if(length(htpp_profile$find(query=mongoQuery(pg_id = PG, cell_type = cell), fields='{"_id" : 1}')) > 0){
+          cat("Entry for plate group", PG, "and", cell, "cells already existed and will be overwritten!!!\n")
+          htpp_profile$remove(query=mongoQuery(pg_id = PG, cell_type = cell))
+        }
+
+        for(iRow in 1:dim(Output)[1]){
+          newDocument = Output[iRow,]
+          htpp_profile$insert(newDocument, auto_unbox=TRUE, na = "null")
+        }#for each well
+        toc()
+
+        cat("Inserted", dim(Output)[1], "documents into htpp_profile for", cell, "cells\n")
+      } #for each cell type
+
+      if(PG=="1"){
+        mongo(collection="htpp_profile",  url=mongoUrl, verbose=getOption("verbose"))$index(add = '{  "pg_id":1, "stype":1, "cell_type":1, "chem_id":1, "n_wells":1,
                                                                                            "dose_level":1, "conc":1, "trt_name":1 }')
+      }
+
+      rm(Input, N, Profiles, Output, newDocument)
     }
 
-    rm(Input, N, Profiles, Output, newDocument)
+
+    return(paste("The htpp_profile collection now contains", htpp_profile$count(), "documents after insert."))
+
+  } else {
+    #------------------------------------------------------------------------------------#
+    # 1. Setup
+    #------------------------------------------------------------------------------------#
+
+    if(file.exists(paste(json_collection_path,"htpp_well_norm.JSON",sep="/"))){
+      htpp_well_norm <- data.table(fromJSON(txt=paste(json_collection_path,"htpp_well_norm.JSON",sep="/")))
+      htpp_well_norm[htpp_well_norm == "NA"] <- NA
+    } else {
+      stop("htpp_well_norm collection is needed for well data for this function, but is empty.  Check your json_collection_path parameter.")
+    }
+
+    if(file.exists(paste(json_collection_path,"cv_bmc.JSON",sep="/"))){
+      cv_bmc <- data.table(fromJSON(txt=paste(json_collection_path,"cv_bmc.JSON",sep="/")))
+      cv_bmc[cv_bmc == "NA"] <- NA
+    } else {
+      stop("cv_bmc collection is needed for well data for this function, but is empty.  Check your json_collection_path parameter.")
+    }
+
+    if(file.exists(paste(json_collection_path,"htpp_well_trt.JSON",sep="/"))){
+      htpp_well_trt <- data.table(fromJSON(txt=paste(json_collection_path,"htpp_well_trt.JSON",sep="/")))
+      htpp_well_trt[htpp_well_trt == "NA"] <- NA
+    } else {
+      stop("htpp_well_trt collection is needed for well data for this function, but is empty.  Check your json_collection_path parameter.")
+    }
+
+    if(file.exists(paste(json_collection_path,"htpp_feature.JSON",sep="/"))){
+      htpp_feature <- data.table(fromJSON(txt=paste(json_collection_path,"htpp_feature.JSON",sep="/")))
+      htpp_feature[htpp_feature == "NA"] <- NA
+    } else {
+      stop("htpp_feature collection is needed for well data for this function, but is empty.  Check your json_collection_path parameter.")
+    }
+
+    if(file.exists(paste(json_collection_path,"htpp_profile.JSON",sep="/")) & rerun == FALSE){
+      htpp_profile <- data.table(fromJSON(txt=paste(json_collection_path,"htpp_profile.JSON",sep="/")))
+      htpp_profile[htpp_profile == "NA"] <- NA
+      message(nrow(htpp_profile))
+
+      #if there are already a documents for this plate group and cell type, remove it
+      if(length(htpp_profile[pg_id == PG & cell_type == cell]) > 0){
+        cat("Entry for plate group", PG, "and", cell, "cells already existed and will be overwritten!!!\n")
+        htpp_profile <- htpp_profile[pg_id != PG & cell_type != cell]
+      }
+    } else if(rerun == TRUE){
+      htpp_profile <- data.table()
+    }
+
+    #------------------------------------------------------------------------------------#
+    # 2. Insert into htpp_profile by cell type
+    #------------------------------------------------------------------------------------#
+    fieldsOfTrt <- htpp_well_trt[, .(pg_id, sample_id)]
+
+    PGList <- as.character(unique(fieldsOfTrt[, pg_id]))
+
+
+    for(PG in PGList){
+
+      if (PG == PGList[1]){
+        FeatureList <- htpp_feature %>% filter(!is.na(feature_id))
+      }
+
+      message(paste("*****", PG, "******"))
+      tic()
+      Input <- data.table(mongo(collection="htpp_well_norm", url=mongoUrl)$find(query=mongoQuery(pg_id=PG, stype=c("reference chemical", "test sample"))))
+      Input <- htpp_well_norm[pg_id==PG & stype %in% c("reference chemical", "test sample")]
+
+      toc()
+
+      ## get CV data
+      CV_BMC_all <- cv_bmc[pg_id==PG]
+
+      CV_BMC_all <- CV_BMC_all %>% select(pg_id, stype, cell_type, chem_id, cv_noec_dose_level, cv_flag)
+
+      for(cell in unique(Input$cell_type)){
+        message(paste("Generating htpp_profile input for", cell, "cells", sep = " "))
+
+        #filter by cell type -- copied from htpp_tcpl code
+        CV_BMC <- as.data.frame(CV_BMC_all[cell_type == cell, ])
+        Input <- Input[cell_type == cell, ]
+
+        #attach -- copied from htpp_tcpl code
+        Input <- Input %>% left_join(CV_BMC) %>%
+          #modify the information for null chemicals, as they can not be properly processed otherwise
+          dplyr::mutate(cv_noec_dose_level = ifelse(stype == "null", 8, cv_noec_dose_level),
+                        cv_flag = ifelse(stype == "null", F, cv_flag))
+
+        #added htpp_tcpl `cv_noec_dose_level + 1` logic
+        Data <- Input[cell_type == cell, ] %>% dplyr::mutate(use.me = (n_cells_keep>minObjects & dose_level <= (cv_noec_dose_level + 1))) %>%
+          group_by(pg_id, stype, cell_type, chem_id, dose_level, conc, conc_unit, trt_name)
+
+        #reorder rows
+        feature_cols <- colnames(Data)[str_detect(colnames(Data), "f_")]
+        meta_cols <- colnames(Data)[!c(str_detect(colnames(Data), "f_"))]
+        Data <- Data[, c(meta_cols, feature_cols)]
+
+        N <- Data %>% dplyr::summarise(n_wells = sum(use.me, na.rm=T))
+
+        tic()
+        Profiles <- Data %>% filter(use.me) %>%
+          summarise_at(.vars = FeatureList$feature_name_mongo, .funs = "median", na.rm=T) %>%
+          dplyr::mutate_at(.vars = FeatureList$feature_name_mongo, .funs = "round", 3)
+        toc()
+
+        Output <- N %>% dplyr::left_join(Profiles)
+
+
+        wellProfile <- Output
+        htpp_profile <- rbind(htpp_profile,wellProfile)
+        cat("Inserted", dim(Output)[1], "documents into htpp_profile for", cell, "cells\n")
+      } #for each cell type
+      rm(Input, N, Profiles, Output)
+    } #for each plate group
+
+    profileJSON<-toJSON(htpp_profile, na="string", digits = 8)
+    write(profileJSON, file=paste(json_collection_path,"htpp_profile.JSON",sep="/"))
+
+    return(paste("The htpp_profile collection now contains", nrow(htpp_profile), "documents after insert."))
+
   }
-
-
-  return(paste("The htpp_profile collection now contains", htpp_profile$count(), "documents after insert."))
 }
 
-#' Calculate, plot and record global Mahalanobis distances from mongo data
+
+#' This is a wrapper function for the globalMahalanobisDistances function that calculates Mahalanobis distances from the htpp_well_norm MongoDB collection
+#' Results are stored in the htpp_global_mah MongoDB collection
+#'
+#' All Level 5 data are retrieved from the htpp_well_norm MongoDB collection
+#' Data are filtered to a subset of good quality data, which is defined as wells with 'n_cells_keep' > 'minObjects' parameter and a relative cell count value > 50).
+#' Principle components analysis (PCA; using the prcomp function with 'center' set to FALSE and 'scale.' set to FALSE) is performed to find the rotation matrix of the data.
+#' The first n eigenfeatures that cover x% of the variance (set by the 'coverVariance' parameter) are selected from the rotation matrix.
+#' The covariance matrix is estimated from those n eigenfeatures, and the inverse of the covariance matrix is calculated.
+#' All data (including the “bad” wells) is transformed using the rotation matrix. Then, Mahalanobis distances are calculated for every plate:
+#' The arithmetic average of all control wells is calculated.
+#' The Mahalanobis distance to this arithmetic average is calculated for each well.
+#' Finally, all results are written into the htpp_global_mah MongoDB collection.
+#' Additionally, a cumulative variance explained plot is created
 #'
 #' @param coverVariance numeric: The value of variance explained used to determine the number of eigen features used in analysis
 #' @param minObjects numeric: The minimum number of objects used to filter the dataset for analysis
@@ -845,6 +1512,8 @@ generate_htppProfile <- function(n_cells, relative_cellCount, mongoUrl, rerun=FA
 #' @param study_name character string: the name of the experiment used to title the plots
 #' @param mongoUrl URL to connect to MongoDB for HTPP dataset; can be created using the mongoURL function in htpp.pl
 #' @param rerun boolean: rerun = TRUE will drop existing cv_well collection and reinsert; FALSE by default
+#' @param use_db  boolean: Determines whether mongoDB will be used or not; default is TRUE
+#' @param json_collection_path  character: Full file path to where JSON collections will be stored
 #'
 #' @import data.table
 #' @import plyr
@@ -860,77 +1529,162 @@ generate_htppProfile <- function(n_cells, relative_cellCount, mongoUrl, rerun=FA
 #'
 #' @export generate_htppGlobalMah
 #'
-generate_htppGlobalMah <- function(coverVariance, minObjects, plot_file_path, study_name, mongoUrl, rerun=FALSE){
+generate_htppGlobalMah <- function(coverVariance, minObjects, plot_file_path, study_name, mongoUrl="", rerun=FALSE, use_db=TRUE, json_collection_path=""){
   #---------------------------------------------------------------------------------------------#
   # 1. Connect and check all collections and delete if rerun == TRUE
   #---------------------------------------------------------------------------------------------#
-  htpp_well_norm<-mongo(collection="htpp_well_norm", url=mongoUrl, verbose=getOption("verbose"))
+  if(use_db==TRUE){
+    htpp_well_norm<-mongo(collection="htpp_well_norm", url=mongoUrl, verbose=getOption("verbose"))
 
-  if(htpp_well_norm$count()<1){
-    stop("The htpp_well_norm collection is empty but is required to create htpp_global_mah. Please ensure htpp_well_norm is created before proceeding.")
-  } else if(htpp_well_norm$count(query=mongoQuery(stype="null"))<1){
-    stop("There are no NULL chemicals in the htpp_well_norm collection.  Please check that generate_htppNullChems() ran correctly")
-  }
-
-
-
-  #global mahalanobis collection
-  htpp_global_mah <- mongo(collection="htpp_global_mah", url=mongoUrl, verbose=getOption("verbose"))
-
-
-  if(rerun == TRUE){
-    htpp_global_mah$drop()
-  }
-
-  #---------------------------------------------------------------------------------------------#
-  # 2. Global Mahalanobis Distance Calculation - FOR EACH CELL TYPE
-  #---------------------------------------------------------------------------------------------#
-
-  Table1_all <- data.table(mongo(collection="htpp_well_norm", url=mongoUrl, verbose=getOption("verbose"))$find(fields='{"_id":0}'))
-
-  for(cell in unique(Table1_all[, cell_type])){
-
-    Table1 <- as.data.frame(Table1_all[cell_type == cell])
-
-    tic()
-    Output <- globalMahalanobisDistances(Table1 = Table1, coverVariance = coverVariance, minObjects = minObjects, SType = "vehicle control",  url = mongoUrl)
-    toc()
-
-    CumProportion <- Output$CumProportion
-
-    #How many PC are needed to explain  at least x% of variance?
-    PC90 <- length(which(CumProportion<0.90))+1
-    PC95 <- length(which(CumProportion<0.95))+1
-    PC99 <- length(which(CumProportion<0.99))+1
-
-    png(paste0(plot_file_path, "/", study_name, "_", cell,"_", "htpp_global_mah_Proportion_of_variance.png"), width=8, height=6, units="in", res=144)
-    plot(x=1:1300, y=CumProportion, col="gray50", pch=19, cex=0.5, type="p",
-         ylim=c(0,1), xlab="# of components", ylab="Proportion of variance retained", main=paste(study_name, "Principal components of telohaec_apcra data for",cell, "cells", sep = " "))
-    #horizontal part
-    segments(x0=30, y0=0.90, x1 = PC90, col="blue", lty='dashed')
-    segments(x0=30, y0=0.95, x1 = PC95, col="blue", lty='solid', lwd=2)
-    segments(x0=30, y0=0.99, x1 = PC99, col="blue", lty='dotted')
-    #vertical part
-    segments(x0=PC90, y0=0.1, y1 = 0.90, col="blue", lty='dashed')
-    segments(x0=PC95, y0=0.1, y1 = 0.95, col="blue", lty='solid', lwd=2)
-    segments(x0=PC99, y0=0.1, y1 = 0.99, col="blue", lty='dotted')
-
-    text(x=c(PC90, PC95, PC99), y=0.05, labels=c(PC90, PC95, PC99), srt=90)
-    text(x=0, y=c(0.9, 0.95, 0.99),  labels=paste0(c(90,95,99), "%"), cex=0.7)
-    dev.off()
-
-    #Check if all data is there
-    normCount<-mongo(collection="htpp_well_norm", url=mongoUrl, verbose=getOption("verbose"))$count(query=mongoQuery(cell_type=cell))
-    gMahCount<-htpp_global_mah$count(query=mongoQuery(cell_type=cell))
-    if(gMahCount != normCount){
-      warning(paste("Expected", normCount, "documents in htpp_global_mah, based on htpp_well_norm, for", cell, ", instead there are", gMahCount, "documents."))
-    } else {
-      message(paste("htpp_global_mah collection was created successfully, contains", gMahCount, "records for", cell, " This matches the size of the htpp_well_norm collection for this cell type"))
+    if(htpp_well_norm$count()<1){
+      stop("The htpp_well_norm collection is empty but is required to create htpp_global_mah. Please ensure htpp_well_norm is created before proceeding.")
+    } else if(htpp_well_norm$count(query=mongoQuery(stype="null"))<1){
+      stop("There are no NULL chemicals in the htpp_well_norm collection.  Please check that generate_htppNullChems() ran correctly")
     }
-  } #for all cell types
+
+
+
+    #global mahalanobis collection
+    htpp_global_mah <- mongo(collection="htpp_global_mah", url=mongoUrl, verbose=getOption("verbose"))
+
+
+    if(rerun == TRUE){
+      htpp_global_mah$drop()
+    }
+
+    #---------------------------------------------------------------------------------------------#
+    # 2. Global Mahalanobis Distance Calculation - FOR EACH CELL TYPE
+    #---------------------------------------------------------------------------------------------#
+
+    Table1_all <- data.table(mongo(collection="htpp_well_norm", url=mongoUrl, verbose=getOption("verbose"))$find(fields='{"_id":0}'))
+
+    for(cell in unique(Table1_all[, cell_type])){
+
+      Table1 <- as.data.frame(Table1_all[cell_type == cell])
+
+      tic()
+      Output <- globalMahalanobisDistances(Table1 = Table1, coverVariance = coverVariance, minObjects = minObjects, SType = "vehicle control",  url = mongoUrl)
+      toc()
+
+      CumProportion <- Output$CumProportion
+
+      #How many PC are needed to explain  at least x% of variance?
+      PC90 <- length(which(CumProportion<0.90))+1
+      PC95 <- length(which(CumProportion<0.95))+1
+      PC99 <- length(which(CumProportion<0.99))+1
+
+      png(paste0(plot_file_path, "/", study_name, "_", cell,"_", "htpp_global_mah_Proportion_of_variance.png"), width=8, height=6, units="in", res=144)
+      plot(x=1:length(CumProportion), y=CumProportion, col="gray50", pch=19, cex=0.5, type="p",
+           ylim=c(0,1), xlab="# of components", ylab="Proportion of variance retained", main=paste(study_name, "Principal components of telohaec_apcra data for",cell, "cells", sep = " "))
+      #horizontal part
+      segments(x0=30, y0=0.90, x1 = PC90, col="blue", lty='dashed')
+      segments(x0=30, y0=0.95, x1 = PC95, col="blue", lty='solid', lwd=2)
+      segments(x0=30, y0=0.99, x1 = PC99, col="blue", lty='dotted')
+      #vertical part
+      segments(x0=PC90, y0=0.1, y1 = 0.90, col="blue", lty='dashed')
+      segments(x0=PC95, y0=0.1, y1 = 0.95, col="blue", lty='solid', lwd=2)
+      segments(x0=PC99, y0=0.1, y1 = 0.99, col="blue", lty='dotted')
+
+      text(x=c(PC90, PC95, PC99), y=0.05, labels=c(PC90, PC95, PC99), srt=90)
+      text(x=0, y=c(0.9, 0.95, 0.99),  labels=paste0(c(90,95,99), "%"), cex=0.7)
+      dev.off()
+
+      #Check if all data is there
+      normCount<-mongo(collection="htpp_well_norm", url=mongoUrl, verbose=getOption("verbose"))$count(query=mongoQuery(cell_type=cell))
+      gMahCount<-htpp_global_mah$count(query=mongoQuery(cell_type=cell))
+      if(gMahCount != normCount){
+        warning(paste("Expected", normCount, "documents in htpp_global_mah, based on htpp_well_norm, for", cell, ", instead there are", gMahCount, "documents."))
+      } else {
+        message(paste0("htpp_global_mah collection was created successfully, contains ", gMahCount, " records for ", cell, ". This matches the size of the htpp_well_norm collection for this cell type"))
+      }
+    } #for all cell types
+  } else {
+
+    if(file.exists(paste(json_collection_path,"htpp_well_norm.JSON",sep="/"))){
+      htpp_well_norm  <-data.table(fromJSON(txt=paste(json_collection_path,"htpp_well_norm.JSON",sep="/")))
+      htpp_well_norm[htpp_well_norm == "NA"] <- NA
+      if(dim(htpp_well_norm[stype=="null"])[1]<1){
+        stop("There are no NULL chemicals in htpp_well_norm.JSON.  Please check that generate_htppNullChems() ran correctly")
+      }
+    } else {
+      stop("htpp_well_norm.JSON not found, check json_collection_path parameter.")
+    }
+    if (rerun==TRUE){
+      write(toJSON(data.table()), file=paste(json_collection_path,"htpp_global_mah.JSON",sep="/"))
+    }
+
+
+    #---------------------------------------------------------------------------------------------#
+    # 2. Global Mahalanobis Distance Calculation - FOR EACH CELL TYPE
+    #---------------------------------------------------------------------------------------------#
+
+    Table1_all <- htpp_well_norm
+
+    for(cell in unique(Table1_all[, cell_type])){
+
+      Table1 <- as.data.frame(Table1_all[cell_type == cell])
+
+      tic()
+      #make this dbfree also!
+      Output <- globalMahalanobisDistances(Table1 = Table1, coverVariance = coverVariance, minObjects = minObjects, SType = "vehicle control",  url = "", use_db=FALSE, json_collection_path=json_collection_path)
+      toc()
+
+      CumProportion <- Output$CumProportion
+
+      #How many PC are needed to explain  at least x% of variance?
+      PC90 <- length(which(CumProportion<0.90))+1
+      PC95 <- length(which(CumProportion<0.95))+1
+      PC99 <- length(which(CumProportion<0.99))+1
+
+      png(paste0(plot_file_path, "/", study_name, "_", cell,"_", "htpp_global_mah_Proportion_of_variance.png"), width=8, height=6, units="in", res=144)
+      plot(x=1:1300, y=CumProportion, col="gray50", pch=19, cex=0.5, type="p",
+           ylim=c(0,1), xlab="# of components", ylab="Proportion of variance retained", main=paste(study_name, "Principal components of telohaec_apcra data for",cell, "cells", sep = " "))
+      #horizontal part
+      segments(x0=30, y0=0.90, x1 = PC90, col="blue", lty='dashed')
+      segments(x0=30, y0=0.95, x1 = PC95, col="blue", lty='solid', lwd=2)
+      segments(x0=30, y0=0.99, x1 = PC99, col="blue", lty='dotted')
+      #vertical part
+      segments(x0=PC90, y0=0.1, y1 = 0.90, col="blue", lty='dashed')
+      segments(x0=PC95, y0=0.1, y1 = 0.95, col="blue", lty='solid', lwd=2)
+      segments(x0=PC99, y0=0.1, y1 = 0.99, col="blue", lty='dotted')
+
+      text(x=c(PC90, PC95, PC99), y=0.05, labels=c(PC90, PC95, PC99), srt=90)
+      text(x=0, y=c(0.9, 0.95, 0.99),  labels=paste0(c(90,95,99), "%"), cex=0.7)
+      dev.off()
+
+      #Check if all data is there
+      global_mah <- data.table(fromJSON(txt=paste(json_collection_path,"htpp_global_mah.JSON",sep="/")))
+      global_mah[global_mah == "NA"] <- NA
+
+      normCount <- dim(htpp_well_norm[cell_type==cell])[1]
+      gMahCount <- dim(global_mah[cell_type==cell])[1]
+      if(gMahCount != normCount){
+        warning(paste("Expected", normCount, "documents in htpp_global_mah, based on htpp_well_norm, for", cell, ", instead there are", gMahCount, "documents."))
+      } else {
+        message(paste0("htpp_global_mah collection was created successfully, contains ", gMahCount, " records for ", cell, ". This matches the size of the htpp_well_norm collection for this cell type"))
+      }
+    } #for all cell types
+  }
 }
 
 #' Create htpp collection htpp_cat_mah for category Mahalanobis distances
+#'
+#' This is a wrapper function for the categoryMahalanobisDistances function that calculates Mahalanobis distances from the htpp_well_norm MongoDB collection for each of the 49 categories
+#' Results are stored in the htpp_cat_mah MongoDB collection
+#'
+#' All Level 5 data are retrieved from the htpp_well_norm MongoDB collection
+#' Data are filtered to a subset of good quality data, which is defined as wells with 'n_cells_keep' > 'minObjects' parameter and a relative cell count value > 50).
+#'
+#' FOR EACH category:
+#' Subset Level 5 data for category of interest
+#' Principle components analysis (PCA; using the prcomp function with 'center' set to FALSE and 'scale.' set to FALSE) is performed to find the rotation matrix of the data.
+#' The first n eigenfeatures that cover x% of the variance (set by the 'coverVariance' parameter) are selected from the rotation matrix.
+#' The covariance matrix is estimated from those n eigenfeatures, and the inverse of the covariance matrix is calculated.
+#' All data (including the “bad” wells) is transformed using the rotation matrix. Then, Mahalanobis distances are calculated for every plate:
+#' The arithmetic average of all control wells is calculated.
+#' The Mahalanobis distance to this arithmetic average is calculated for each well.
+#' Finally, all results are written into the htpp_cat_mah MongoDB collection.
+#' Additionally, variance explained data for each category is saved to disk
 #'
 #' @param coverVariance numeric: The value of variance explained used to determine the number of eigen features used in analysis
 #' @param minObjects numeric: The minimum number of objects used to filter the dataset for analysis
@@ -938,6 +1692,8 @@ generate_htppGlobalMah <- function(coverVariance, minObjects, plot_file_path, st
 #' @param varianceExplainedPath character string: the path where the function will write variance explained metadata
 #' @param nThreads numeric:  the number of threads to use for processing; default is 1
 #' @param rerun boolean: rerun = TRUE will drop existing htpp_cat_mah collection and reinsert; have FALSE by default
+#' @param use_db  boolean: Determines whether mongoDB will be used or not; default is TRUE
+#' @param json_collection_path character: Full file path to where JSON collections will be stored
 #'
 #' @import data.table
 #' @import plyr
@@ -955,127 +1711,226 @@ generate_htppGlobalMah <- function(coverVariance, minObjects, plot_file_path, st
 #'
 #' @export
 #'
-generate_htppCatMah <- function(coverVariance, minObjects, mongoUrl, varianceExplainedPath, nThreads=1, rerun=FALSE){
+generate_htppCatMah <- function(coverVariance, minObjects, mongoUrl="", varianceExplainedPath, nThreads=1, rerun=FALSE, use_db=TRUE, json_collection_path=""){
   #---------------------------------------------------------------------------------------------#
   # 1. Connect and check collection and delete if rerun == TRUE
   #---------------------------------------------------------------------------------------------#
+  if(use_db==TRUE){
 
-  htpp_well_norm<-mongo(collection="htpp_well_norm", url=mongoUrl, verbose=getOption("verbose"))
-  if(htpp_well_norm$count()<1){
-    stop("The htpp_well_norm collection is empty but is required to create htpp_cat_mah. Please ensure htpp_well_norm is created before proceeding.")
-  } else if(htpp_well_norm$count(query = mongoQuery(stype = "null"))<1){
-    stop("The htpp_well_norm collection has no records with 'stype':'null' which are required for category mahalanobis.  Please check that htpp_well_norm has the correct recordsS")
-  }
+    htpp_well_norm <- mongo(collection="htpp_well_norm", url=mongoUrl, verbose=getOption("verbose"))
 
-  #category mahalanobis collection
-  htpp_cat_mah <- mongo(collection="htpp_cat_mah", url=mongoUrl, verbose=getOption("verbose"))
-
-  if(rerun == TRUE){
-    htpp_cat_mah$drop()
-  }
-
-  #add index
-  mongo(collection = "htpp_cat_mah", url = mongoUrl, verbose = getOption("verbose"))$index(add = '{"pg_id" : 1, "stype": 1, "chem_id": 1, "category_name_r ": 1}')
-
-  #---------------------------------------------------------------------------------------------#
-  # 2. Category-level Mahalanobis Distance Calculation - FOR EACH CELL TYPE
-  #---------------------------------------------------------------------------------------------#
-
-  #load all well data
-  Table1_all <- data.table(mongo(collection="htpp_well_norm", url=mongoUrl, verbose=getOption("verbose"))$find(fields='{"_id":0}'))
-
-
-  #grab category information
-  CategoryList <- mongo(collection  ="htpp_feature", url = mongoUrl, verbose = getOption("verbose"))$find() %>%
-    select(category_name_r) %>% distinct() %>% filter(!is.na(category_name_r))
-
-
-  FeatureList <- mongo(collection="htpp_feature", url=mongoUrl, verbose=getOption("verbose"))$find() %>% as_tibble()
-
-
-  #CategoryList = CategoryList %>% mutate(n=row_number()) %>% filter(n<=40& n>20) %>% select(-n)
-  #CategoryList = CategoryList %>% mutate(n=row_number()) %>% filter(n>40) %>% select(-n)
-
-  my.cluster <- parallel::makeCluster(
-    nThreads,
-    type = "PSOCK"
-  )
-
-  registerDoParallel(cl <- my.cluster)
-
-  clusterExport(cl, c("categoryMahalanobisDistances", 'mongoQuery'))
-
-  CatNames<-CategoryList$category_name_r
-  CatSplit<-split(CatNames, cut(seq_along(CatNames),3,labels = FALSE))
-
-
-  #define combine function for the foreach loops
-  comb <- function(x, ...){
-    lapply(seq_along(x),FUN = function(i){ c(x[[i]], lapply(list(...), function(y) y[[i]]))})
-  }
-
-  for(cell in unique(Table1_all[, cell_type])){
-
-    Table1 <- as.data.frame(Table1_all[cell_type == cell])
-    varianceExplained1<-c()
-    varianceExplained2<-c()
-    varianceExplained3<-c()
-
-
-
-    tic()
-    ResultList<-foreach(x=CatSplit$`1`, .packages=c('tidyr', 'dplyr', 'stringr', 'mongolite'), .combine = comb, .init=list(list(), list())) %dopar% {
-      Output <- try(categoryMahalanobisDistances(Level5=Table1, FeatureList = FeatureList, CategoryName = x,
-                                                 coverVariance = coverVariance, minObjects = minObjects, SType = "vehicle control",  mongoUrl = mongoUrl))
-
-      list(Output[[1]], Output[[2]])
+    if(htpp_well_norm$count()<1){
+      stop("The htpp_well_norm collection is empty but is required to create htpp_cat_mah. Please ensure htpp_well_norm is created before proceeding.")
+    } else if(htpp_well_norm$count(query = mongoQuery(stype = "null"))<1){
+      stop("The htpp_well_norm collection has no records with 'stype':'null' which are required for category mahalanobis.  Please check that htpp_well_norm has the correct records")
     }
 
-    newLine <- do.call(rbind, ResultList[[1]])
-    varianceExplained1 <- do.call(rbind, ResultList[[2]])
+    #category mahalanobis collection
+    htpp_cat_mah <- mongo(collection="htpp_cat_mah", url=mongoUrl, verbose=getOption("verbose"))
 
-    #bulk insert into collection
-    htpp_cat_mah$insert(newLine, auto_unbox=TRUE, na = "null")
-
-    ResultList<-foreach(x=CatSplit$`2`, .packages=c('tidyr', 'dplyr', 'stringr', 'mongolite'), .combine = comb, .init=list(list(), list())) %dopar% {
-      Output <- try(categoryMahalanobisDistances(Level5=Table1, FeatureList = FeatureList, CategoryName = x,
-                                                 coverVariance = coverVariance, minObjects = minObjects, SType = "vehicle control",  mongoUrl = mongoUrl))
-
-      list(Output[[1]], Output[[2]])
+    if(rerun == TRUE){
+      htpp_cat_mah$drop()
     }
 
-    newLine <- do.call(rbind, ResultList[[1]])
-    varianceExplained2 <- do.call(rbind, ResultList[[2]])
+    #add index
+    mongo(collection = "htpp_cat_mah", url = mongoUrl, verbose = getOption("verbose"))$index(add = '{"pg_id" : 1, "stype": 1, "chem_id": 1, "category_name_r ": 1}')
 
-    #bulk insert into collection
-    htpp_cat_mah$insert(newLine, auto_unbox=TRUE, na = "null")
+    #---------------------------------------------------------------------------------------------#
+    # 2. Category-level Mahalanobis Distance Calculation - FOR EACH CELL TYPE
+    #---------------------------------------------------------------------------------------------#
 
-    ResultList<-foreach(x=CatSplit$`3`, .packages=c('tidyr', 'dplyr', 'stringr', 'mongolite'), .combine = comb, .init=list(list(), list())) %dopar% {
-      Output <- try(categoryMahalanobisDistances(Level5=Table1, FeatureList = FeatureList, CategoryName = x,
-                                                 coverVariance = coverVariance, minObjects = minObjects, SType = "vehicle control",  mongoUrl = mongoUrl))
+    #load all well data
+    Table1_all <- data.table(mongo(collection="htpp_well_norm", url=mongoUrl, verbose=getOption("verbose"))$find(fields='{"_id":0}'))
 
-      list(Output[[1]], Output[[2]])
+
+
+
+
+    #CategoryList = CategoryList %>% mutate(n=row_number()) %>% filter(n<=40& n>20) %>% select(-n)
+    #CategoryList = CategoryList %>% mutate(n=row_number()) %>% filter(n>40) %>% select(-n)
+
+    my.cluster <- parallel::makeCluster(
+      nThreads,
+      type = "PSOCK"
+    )
+
+    registerDoParallel(cl <- my.cluster)
+
+    clusterExport(cl, c("categoryMahalanobisDistances", 'mongoQuery'))
+
+
+
+
+    for(cell in unique(Table1_all[, cell_type])){
+
+      Table1 <- as.data.frame(Table1_all[cell_type == cell])
+      varianceExplained1<-c()
+      varianceExplained2<-c()
+      varianceExplained3<-c()
+
+      #grab category information
+      CategoryList <- mongo(collection = "htpp_feature", url = mongoUrl, verbose = getOption("verbose"))$find(query = mongoQuery(cell_type = cell)) %>%
+        select(category_name_r) %>% distinct() %>% filter(!is.na(category_name_r))
+
+      CatNames<-CategoryList$category_name_r
+      CatSplit<-split(CatNames, cut(seq_along(CatNames),3,labels = FALSE))
+
+
+      FeatureList <- mongo(collection="htpp_feature", url=mongoUrl, verbose=getOption("verbose"))$find(query = mongoQuery(cell_type = cell)) %>% as_tibble()
+
+      #define combine function for the foreach loops
+      comb <- function(x, ...){
+        lapply(seq_along(x),FUN = function(i){ c(x[[i]], lapply(list(...), function(y) y[[i]]))})
+      }
+
+      tic()
+      ResultList<-foreach(x=CatSplit$`1`, .packages=c('tidyr', 'dplyr', 'stringr', 'mongolite'), .combine = comb, .init=list(list(), list())) %dopar% {
+        Output <- try(categoryMahalanobisDistances(Level5=Table1, FeatureList = FeatureList, CategoryName = x, coverVariance = coverVariance, minObjects = minObjects, SType = "vehicle control",  mongoUrl = mongoUrl))
+
+        list(Output[[1]], Output[[2]])
+      }
+
+      newLine <- do.call(rbind, ResultList[[1]])
+      varianceExplained1 <- do.call(rbind, ResultList[[2]])
+
+      #bulk insert into collection
+      htpp_cat_mah$insert(newLine, auto_unbox=TRUE, na = "null")
+
+      ResultList<-foreach(x=CatSplit$`2`, .packages=c('tidyr', 'dplyr', 'stringr', 'mongolite'), .combine = comb, .init=list(list(), list())) %dopar% {
+        Output <- try(categoryMahalanobisDistances(Level5=Table1, FeatureList = FeatureList, CategoryName = x,
+                                                   coverVariance = coverVariance, minObjects = minObjects, SType = "vehicle control",  mongoUrl = mongoUrl))
+
+        list(Output[[1]], Output[[2]])
+      }
+
+      newLine <- do.call(rbind, ResultList[[1]])
+      varianceExplained2 <- do.call(rbind, ResultList[[2]])
+
+      #bulk insert into collection
+      htpp_cat_mah$insert(newLine, auto_unbox=TRUE, na = "null")
+
+      ResultList<-foreach(x=CatSplit$`3`, .packages=c('tidyr', 'dplyr', 'stringr', 'mongolite'), .combine = comb, .init=list(list(), list())) %dopar% {
+        Output <- try(categoryMahalanobisDistances(Level5=Table1, FeatureList = FeatureList, CategoryName = x,
+                                                   coverVariance = coverVariance, minObjects = minObjects, SType = "vehicle control",  mongoUrl = mongoUrl))
+        list(Output[[1]], Output[[2]])
+      }
+
+      newLine <- do.call(rbind, ResultList[[1]])
+      varianceExplained3 <- do.call(rbind, ResultList[[2]])
+
+      #bulk insert into collection
+      htpp_cat_mah$insert(newLine, auto_unbox=TRUE, na = "null")
+
+      #combine all varianceExplained outputs
+      varianceExplained <- rbind(varianceExplained1, varianceExplained2, varianceExplained3)
+
+      message(paste("Wrote variance explained table to file:", paste0(varianceExplainedPath, "/", cell, "_varianceExplained.csv"), sep = " "))
+      write_csv(varianceExplained, paste0(varianceExplainedPath, "/", cell, "_varianceExplained.csv") )
+
+      toc()
+
+
+    }
+    stopCluster(cl)
+
+    #Check if all data is there
+    if(htpp_cat_mah$count()/49 != htpp_well_norm$count()){
+      warning(paste("Expected", (49*htpp_well_norm$count()), "documents in htpp_cat_mah, based on 49 * htpp_well_norm, instead there are", htpp_cat_mah$count(), "documents."))
+    }
+  } else {
+
+    if(file.exists(paste(json_collection_path,"htpp_well_norm.JSON",sep="/"))){
+      htpp_well_norm  <-data.table(fromJSON(txt=paste(json_collection_path,"htpp_well_norm.JSON",sep="/")))
+      htpp_well_norm[htpp_well_norm == "NA"] <- NA
+      NullType<-htpp_well_norm[stype=="null"]
+      if(nrow(NullType)<1){
+        stop("htpp_well_norm.json has no records with 'stype':'null' which are required for category mahalanobis.  Please check that htpp_well_norm has the correct records")
+      }
+    } else {
+      stop("htpp_well_norm collection is needed to create htpp_cat_mah, but is empty.  Check your json_collection_path parameter.")
     }
 
-    newLine <- do.call(rbind, ResultList[[1]])
-    varianceExplained3 <- do.call(rbind, ResultList[[2]])
+    #category mahalanobis collection
+    if(file.exists(paste(json_collection_path,"htpp_cat_mah.JSON",sep="/")) & rerun==FALSE){
+      htpp_cat_mah  <-data.table(fromJSON(txt=paste(json_collection_path,"htpp_cat_mah.JSON",sep="/")))
+      htpp_cat_mah[htpp_cat_mah == "NA"] <- NA
+    } else {
+      htpp_cat_mah<-data.table()
+    }
 
-    #bulk insert into collection
-    htpp_cat_mah$insert(newLine, auto_unbox=TRUE, na = "null")
+    if(file.exists(paste(json_collection_path,"htpp_feature.JSON",sep="/"))){
+      htpp_feature  <-data.table(fromJSON(txt=paste(json_collection_path,"htpp_feature.JSON",sep="/")))
+      htpp_feature[htpp_feature == "NA"] <- NA
+    } else {
+      stop("htpp_feature collection is needed to create htpp_cat_mah, but is empty.  Check your json_collection_path parameter.")
+    }
 
-    #combine all varianceExplained outputs
-    varianceExplained <- rbind(varianceExplained1, varianceExplained2, varianceExplained3)
-    write_csv(varianceExplained, paste0(varianceExplainedPath, "/", cell, "_varianceExplained.csv") )
+    #---------------------------------------------------------------------------------------------#
+    # 2. Category-level Mahalanobis Distance Calculation - FOR EACH CELL TYPE
+    #---------------------------------------------------------------------------------------------#
+    #CategoryList = CategoryList %>% mutate(n=row_number()) %>% filter(n<=40& n>20) %>% select(-n)
+    #CategoryList = CategoryList %>% mutate(n=row_number()) %>% filter(n>40) %>% select(-n)
 
-    toc()
+    my.cluster <- parallel::makeCluster(
+      nThreads,
+      type = "PSOCK"
+    )
+
+    registerDoParallel(cl <- my.cluster)
+
+    clusterExport(cl, c("categoryMahalanobisDistances", 'mongoQuery'))
+
+    CatNames <- unique(CategoryList$category_name_r)
 
 
-  }
-  stopCluster(cl)
+    #define combine function for the foreach loops
+    comb <- function(x, ...){
+      lapply(seq_along(x),FUN = function(i){ c(x[[i]], lapply(list(...), function(y) y[[i]]))})
+    }
 
-  #Check if all data is there
-  if(htpp_cat_mah$count()/49 != htpp_well_norm$count()){
-    warning(paste("Expected", (49*htpp_well_norm$count()), "documents in htpp_cat_mah, based on 49 * htpp_well_norm, instead there are", htpp_cat_mah$count(), "documents."))
+    for(cell in unique(Table1_all[, cell_type])){
+
+      Table1 <- as.data.frame(Table1_all[cell_type == cell])
+      varianceExplained<-c()
+
+
+
+
+      tic()
+      ResultList<-foreach(x=CatNames, .packages=c('tidyr', 'dplyr', 'stringr', 'mongolite'), .combine = comb, .init=list(list(), list())) %dopar% {
+        Output <- try(categoryMahalanobisDistances(Level5=Table1, FeatureList = FeatureList, CategoryName = x,
+                                                   coverVariance = coverVariance, minObjects = minObjects, SType = "vehicle control",  mongoUrl = mongoUrl, use_db = FALSE))
+        #load all well data
+        Table1_all <- htpp_well_norm
+
+        #grab category information
+        CategoryList <- htpp_feature[!is.na(category_name_r)] %>% dplyr::filter(cell_type == cell)
+
+        FeatureList <- htpp_feature %>% as_tibble() %>% dplyr::filter(cell_type == cell)
+
+        list(Output[[1]], Output[[2]])
+      }
+
+      newLine <- do.call(rbind, ResultList[[1]])
+      varianceExplained <- do.call(rbind, ResultList[[2]])
+
+      message(paste("Wrote variance explained table to file:", paste0(varianceExplainedPath, "/", cell, "_varianceExplained.csv"), sep = " "))
+      write_csv(varianceExplained, paste0(varianceExplainedPath, "/", cell, "_varianceExplained.csv") )
+
+      htpp_cat_mah<-rbind(htpp_cat_mah, newLine)
+
+      toc()
+
+
+    }
+    stopCluster(cl)
+    cat_mahJSON<-toJSON(htpp_cat_mah, na="string", digits = 8)
+    write(cat_mahJSON, file=paste(json_collection_path,"htpp_cat_mah.JSON",sep="/"))
+
+    #Check if all data is there
+    if(nrow(htpp_cat_mah)/49 != nrow(htpp_well_norm)){
+      warning(paste("Expected", (49*nrow(htpp_well_norm)), "documents in htpp_cat_mah, based on 49 * htpp_well_norm, instead there are", nrow(htpp_cat_mah), "documents."))
+    }
   }
 }
 
@@ -1083,10 +1938,12 @@ generate_htppCatMah <- function(coverVariance, minObjects, mongoUrl, varianceExp
 #' Create htpp_bmc collection based on htpp_tcpl and adds global mahalanobis distances into htpp_bmc
 #'
 #' @param mongoUrl character string: URL to connect to MongoDB for HTPP dataset; can be created using the mongoURL function in htpp.pl
-#' @param hitCall numeric (between 0-1): Hitcall threshold from tcplfit2 to use for filtering good BMD values; default is 0 for no hitcall filtering
+#' @param hitCall numeric (between 0-1): Hitcall threshold from tcplfit2 to use for filtering good BMD values; default is 0.9
 #' @param bmc_max numeric: The maximum bmc value if bmd > highest tested conc; default is NA
 #' @param bmc_min Defines the denominator for calculating the minimum bmc value for cases where the bmc is less that the lowest tested conc (i.e., minimum tested conc/bmc_min); default is 10^0.5
 #' @param rerun rerun = TRUE will drop existing entries in htpp_bmc for approach = "global" and endpoint = "global", and reinsert; FALSE by default
+#' @param use_db boolean: Determines whether mongoDB will be used or not; default is TRUE
+#' @param json_collection_path  character: Full file path to where JSON collections will be stored
 #'
 #' @import data.table
 #' @import plyr
@@ -1101,48 +1958,100 @@ generate_htppCatMah <- function(coverVariance, minObjects, mongoUrl, varianceExp
 #'
 #' @export generate_htppBmc_globalMah
 #'
-generate_htppBmc_globalMah <- function(mongoUrl, hitCall=0, bmc_max=NA, bmc_min=10^0.5, rerun=FALSE){
-  htpp_tcpl <- mongo(collection = "htpp_tcpl", url = mongoUrl, verbose = getOption("verbose"))
-  if (htpp_tcpl$count(query = mongoQuery(approach = "global", endpoint = "global"))<1){
-    stop("The there are no global documents in htpp_tcpl. These are needed to generate htpp_bmc.  Please ensure htpp_tcpl is filled correctly before proceeding.")
-  }
+generate_htppBmc_globalMah <- function(mongoUrl="", hitCall=0.9, bmc_max=NA, bmc_min=10^0.5, rerun=FALSE, use_db=TRUE, json_collection_path=""){
 
-  ## 1) Write into htpp_bmc
-  htpp_bmc <- mongo(collection = "htpp_bmc", url=mongoUrl, verbose=getOption("verbose"))
-  htpp_bmc$count(query = mongoQuery(approach = "global", endpoint = "global"))
+  if (use_db==TRUE){
+    htpp_tcpl <- mongo(collection = "htpp_tcpl", url = mongoUrl, verbose = getOption("verbose"))
+    if (htpp_tcpl$count(query = mongoQuery(approach = "global", endpoint = "global"))<1){
+      stop("The there are no global documents in htpp_tcpl. These are needed to generate htpp_bmc.  Please ensure htpp_tcpl is filled correctly before proceeding.")
+    }
 
-  #if rerun == TRUE remove global fits from collection
-  if(rerun == TRUE){
-    htpp_bmc$remove(query = mongoQuery(approach = "global", endpoint = "global"))
-  }
+    ## 1) Write into htpp_bmc
+    htpp_bmc <- mongo(collection = "htpp_bmc", url=mongoUrl, verbose=getOption("verbose"))
 
-  htpp_bmc$index(add = '{"pg_id" : 1, "stype": 1, "cell_type": 1, "chem_id": 1, "approach": 1, "endpoint": 1}')
+    #if rerun == TRUE remove global fits from collection
+    if(rerun == TRUE){
+      htpp_bmc$remove(query = mongoQuery(approach = "global", endpoint = "global"))
+    }
 
-  CPData <- data.table(htpp_tcpl$find(query = mongoQuery(approach = "global", endpoint = "global")))
+    htpp_bmc$index(add = '{"pg_id" : 1, "stype": 1, "cell_type": 1, "chem_id": 1, "approach": 1, "endpoint": 1}')
 
-
-  CPData <- CPData %>%
-    dplyr::mutate(bmc = ifelse(hitcall > hitCall, bmd, NA),
-                  bmc = ifelse(bmc > max_conc, bmc_max, bmc),
-                  bmc = ifelse(bmc < min_conc/bmc_min, min_conc/bmc_min, bmc),
-                  bmc = signif(bmc, 3),
-                  cp_flag = ifelse(!is.na(bmc) & bmc < min_conc, T, F),
-                  cp_flag = ifelse(n_conc < 4, NA, cp_flag))
-
-  message(paste0(capture.output(table(CPData$stype, !is.na(CPData$bmc))), collapse = "\n")) #look across all cell types
+    CPData <- data.table(htpp_tcpl$find(query = mongoQuery(approach = "global", endpoint = "global")))
 
 
+    CPData <- CPData %>%
+      dplyr::mutate(bmc = ifelse(hitcall > hitCall, bmd, NA),
+                    bmc = ifelse(bmc > max_conc, bmc_max, bmc),
+                    bmc = ifelse(bmc < min_conc/bmc_min, min_conc/bmc_min, bmc),
+                    bmc = signif(bmc, 3),
+                    cp_flag = ifelse(!is.na(bmc) & bmc < min_conc, T, F),
+                    cp_flag = ifelse(n_conc < 4, NA, cp_flag))
 
-  for(i in 1:dim(CPData)[1]){
-    htpp_bmc$insert(CPData[i,], auto_unbox=TRUE, na = "null")
-  }
-  message(paste("Inserted", dim(CPData)[1], "bmc documents to htpp_bmc for all chemicals and cell types", sep = " "))
+    message(paste0(capture.output(table(CPData$stype, !is.na(CPData$bmc))), collapse = "\n")) #look across all cell types
 
-  #check collection dimension after inserting documents
-  bmcCount<-htpp_bmc$count(query = mongoQuery(approach = "global", endpoint = "global"))
-  tcplGlobCount<-htpp_tcpl$count(query = mongoQuery(approach = "global", endpoint = "global"))
-  if(bmcCount != tcplGlobCount){
-    warning(paste("Expected", tcplGlobCount, "documents in htpp_bmc based on htpp_tcpl.  Instead, there are", bmcCount, "documents."))
+
+
+    for(i in 1:dim(CPData)[1]){
+      htpp_bmc$insert(CPData[i,], auto_unbox=TRUE, na = "null")
+    }
+    message(paste("Inserted", dim(CPData)[1], "bmc documents to htpp_bmc for all chemicals and cell types", sep = " "))
+
+    #check collection dimension after inserting documents
+    bmcCount<-htpp_bmc$count(query = mongoQuery(approach = "global", endpoint = "global"))
+    tcplGlobCount<-htpp_tcpl$count(query = mongoQuery(approach = "global", endpoint = "global"))
+    if(bmcCount != tcplGlobCount){
+      warning(paste("Expected", tcplGlobCount, "documents in htpp_bmc based on htpp_tcpl.  Instead, there are", bmcCount, "documents."))
+    }
+  } else {
+    if(file.exists(paste(json_collection_path,"htpp_tcpl.JSON",sep="/"))){
+      htpp_tcpl <- data.table(fromJSON(txt=paste(json_collection_path,"htpp_tcpl.JSON",sep="/")))
+      htpp_tcpl[htpp_tcpl == "NA"] <- NA
+      if(nrow(htpp_tcpl[approach=="global" & endpoint=="global"])<1){
+        stop("The there are no global documents in htpp_tcpl. These are needed to generate htpp_bmc.  Please ensure htpp_tcpl is filled correctly before proceeding.")
+      }
+    } else {
+      stop("htpp_htpp_tcpl collection is needed for this function, but is empty.  Check your json_collection_path parameter.")
+    }
+
+    if(file.exists(paste(json_collection_path,"htpp_bmc.JSON",sep="/")) & rerun == TRUE){
+      htpp_bmc <- data.table(fromJSON(txt=paste(json_collection_path,"htpp_bmc.JSON",sep="/")))
+      htpp_bmc[htpp_bmc == "NA"] <- NA
+      htpp_bmc <- htpp_bmc[!(approach=="global" & endpoint=="global")] #if rerun == TRUE remove global fits from collection
+    }else if(file.exists(paste(json_collection_path,"htpp_bmc.JSON",sep="/")) & rerun == FALSE){
+      htpp_bmc <- data.table(fromJSON(txt=paste(json_collection_path,"htpp_bmc.JSON",sep="/")))
+      htpp_bmc[htpp_bmc == "NA"] <- NA
+    }else{
+      htpp_bmc <- data.table()
+    }
+
+    CPData <- htpp_tcpl[approach=="global" & endpoint=="global"]
+
+    CPData <- CPData %>%
+      dplyr::mutate(bmc = ifelse(hitcall > hitCall, bmd, NA),
+                    bmc = ifelse(bmc > max_conc, bmc_max, bmc),
+                    bmc = ifelse(bmc < min_conc/bmc_min, min_conc/bmc_min, bmc),
+                    bmc = signif(bmc, 3),
+                    cp_flag = ifelse(!is.na(bmc) & bmc < min_conc, T, F),
+                    cp_flag = ifelse(n_conc < 4, NA, cp_flag))
+
+    message(paste0(capture.output(table(CPData$stype, !is.na(CPData$bmc))), collapse = "\n")) #look across all cell types
+
+
+
+    for(i in 1:dim(CPData)[1]){
+      htpp_bmc <- rbind(htpp_bmc, CPData[i,])
+    }
+    message(paste("Inserted", dim(CPData)[1], "bmc documents to htpp_bmc for all chemicals and cell types", sep = " "))
+
+    #check collection dimension after inserting documents
+    bmcCount <- nrow(htpp_bmc[approach=="global" & endpoint=="global"])
+    tcplGlobCount <- nrow(htpp_tcpl[approach=="global" & endpoint=="global"])
+    if(bmcCount != tcplGlobCount){
+      warning(paste("Expected", tcplGlobCount, "documents in htpp_bmc based on htpp_tcpl.  Instead, there are", bmcCount, "documents."))
+    }
+
+    bmcJSON<-toJSON(htpp_bmc, na="string", digits = 8)
+    write(bmcJSON, file=paste(json_collection_path,"htpp_bmc.JSON",sep="/"))
   }
 }
 
@@ -1151,6 +2060,8 @@ generate_htppBmc_globalMah <- function(mongoUrl, hitCall=0, bmc_max=NA, bmc_min=
 #'
 #' @param mongoUrl character string: URL to connect to MongoDB for HTPP dataset; can be created using the mongoURL function in htpp.pl
 #' @param null_max_conc integer: Maximum concentration of Null chemicals; default is 100 (uM)
+#' @param use_db  boolean: Determines whether mongoDB will be used or not; default is TRUE
+#' @param json_collection_path character: Full file path to where JSON collections will be stored
 #'
 #' @import data.table
 #' @import plyr
@@ -1165,35 +2076,61 @@ generate_htppBmc_globalMah <- function(mongoUrl, hitCall=0, bmc_max=NA, bmc_min=
 #'
 #' @export nullProbs_catMah
 #'
-nullProbs_catMah <- function(mongoUrl, null_max_conc = 100){
+nullProbs_catMah <- function(mongoUrl="", null_max_conc = 100, use_db=T, json_collection_path=""){
 
-  ## 1.a) load data
-  htpp_tcpl <- mongo(collection = "htpp_tcpl", url = mongoUrl, verbose = getOption("verbose"))
-  if(htpp_tcpl$count(query=mongoQuery(approach = "category")) <1 ){
-    stop("The htpp_tcpl collection has no category documents.  These are required to fill in htpp_bmc. Please ensure htpp_tcpl is created correctly before proceeding.")
+  if(use_db==T){
+    ## 1.a) load data
+    htpp_tcpl <- mongo(collection = "htpp_tcpl", url = mongoUrl, verbose = getOption("verbose"))
+    if(htpp_tcpl$count(query=mongoQuery(approach = "category")) <1 ){
+      stop("The htpp_tcpl collection has no category documents.  These are required to fill in htpp_bmc. Please ensure htpp_tcpl is created correctly before proceeding.")
+    }
+
+    CPData <- data.table(htpp_tcpl$find(query = mongoQuery(approach = "category")))
+
+    # Investigate the null chemicals
+    NullChem <- CPData %>% filter(stype == "null") %>%
+      dplyr::mutate(Hitcall = ifelse(bmd > null_max_conc | is.na(bmd), 0, hitcall))
+
+    ZF_Null <- NullChem %>% dplyr::group_by(pg_id, cell_type, chem_id) %>% dplyr::summarise(maxHitcall = max(Hitcall))
+    hist(ZF_Null$maxHitcall)
+
+    #print out hitcall probabilities
+    message(paste0(capture.output(quantile(ZF_Null$maxHitcall, probs=c(0.75, 0.80, 0.85, 0.90, 0.95, 0.99))), collapse = "\n"))
+  } else {
+
+    ## 1.a) load data
+    if(file.exists(paste(json_collection_path,"htpp_tcpl.JSON",sep="/"))){
+      htpp_tcpl  <-data.table(fromJSON(txt=paste(json_collection_path,"htpp_tcpl.JSON",sep="/")))
+      htpp_tcpl[htpp_tcpl == "NA"] <- NA
+      CPData<-htpp_tcpl[approach =="category"]
+      if(nrow(CPData)<1){
+        stop("The there are no category documents in htpp_tcpl. These are needed to calculate the category mahalanobis distances.")
+      }
+    } else {
+      stop("htpp_tcpl collection is needed for this function, but is empty.  Check your json_collection_path parameter.")
+    }
+
+    # Investigate the null chemicals
+    NullChem <- CPData %>% filter(stype == "null") %>%
+      dplyr::mutate(Hitcall = ifelse(bmd > null_max_conc | is.na(bmd), 0, hitcall))
+
+    ZF_Null <- NullChem %>% dplyr::group_by(pg_id, cell_type, chem_id) %>% dplyr::summarise(maxHitcall = max(Hitcall))
+    hist(ZF_Null$maxHitcall)
+
+    #print out hitcall probabilities
+    message(paste0(capture.output(quantile(ZF_Null$maxHitcall, probs=c(0.75, 0.80, 0.85, 0.90, 0.95, 0.99))), collapse = "\n"))
   }
-
-  CPData <- data.table(htpp_tcpl$find(query = mongoQuery(approach = "category")))
-
-  # Investigate the null chemicals
-  NullChem <- CPData %>% filter(stype == "null") %>%
-    dplyr::mutate(Hitcall = ifelse(bmd > null_max_conc | is.na(bmd), 0, hitcall))
-
-  ZF_Null <- NullChem %>% dplyr::group_by(pg_id, cell_type, chem_id) %>% dplyr::summarise(maxHitcall = max(Hitcall))
-  hist(ZF_Null$maxHitcall)
-
-  #print out hitcall probabilities
-  message(paste0(capture.output(quantile(ZF_Null$maxHitcall, probs=c(0.75, 0.80, 0.85, 0.90, 0.95, 0.99))), collapse = "\n"))
-
 }
 
 #' Add category Mahalanobis distance information to htpp_bmc collection
 #'
 #' @param mongoUrl character string: URL to connect to MongoDB for HTPP dataset; can be created using the mongoURL function in htpp.pl
-#' @param hitCall numeric (between 0-1): Hitcall threshold from tcplfit2 to use for filtering good BMD values; default is 0.95
+#' @param hitCall numeric (between 0-1): Hitcall threshold from tcplfit2 to use for filtering good BMD values; default is 0.9
 #' @param bmc_max numeric: The maximum bmc value if bmd > highest tested conc; default is NA
 #' @param bmc_min numeric: Defines the denominator for calculating the minimum bmc value for cases where the bmc is less that the lowest tested conc (i.e., minimum tested conc/bmc_min); default is 10^0.5
 #' @param rerun boolean: rerun = TRUE will drop existing entries in htpp_bmc for approach = "global" and endpoint = "global", and reinsert; FALSE by default
+#' @param use_db  boolean: Determines whether mongoDB will be used or not; default is TRUE
+#' @param json_collection_path  character: Full file path to where JSON collections will be stored
 #'
 #' @import data.table
 #' @import plyr
@@ -1208,62 +2145,242 @@ nullProbs_catMah <- function(mongoUrl, null_max_conc = 100){
 #'
 #' @export
 #'
-generate_htppBmc_catMah <- function(mongoUrl, hitCall=0.95, bmc_max=NA, bmc_min=10^0.5, rerun=FALSE){
-  #---------------------------------------------------------------------------------------------#
-  # 1.Apply the thresholds & move data from htpp_tcpl --> htpp_bmc
-  #---------------------------------------------------------------------------------------------#
+generate_htppBmc_catMah <- function(mongoUrl="", hitCall=0.9, bmc_max=NA, bmc_min=10^0.5, rerun=FALSE, use_db=T, json_collection_path=""){
+  if(use_db==T){
+    #---------------------------------------------------------------------------------------------#
+    # 1.Apply the thresholds & move data from htpp_tcpl --> htpp_bmc
+    #---------------------------------------------------------------------------------------------#
 
-  ## 1.a) load data
-  htpp_tcpl <- mongo(collection = "htpp_tcpl", url = mongoUrl, verbose = getOption("verbose"))
-  if(htpp_tcpl$count(query=mongoQuery(approach = "category")) <1 ){
-    stop("The htpp_tcpl collection has no category documents.  These are required to fill in htpp_bmc. Please ensure htpp_tcpl is created correctly before proceeding.")
+    ## 1.a) load data
+    htpp_tcpl <- mongo(collection = "htpp_tcpl", url = mongoUrl, verbose = getOption("verbose"))
+
+    if(htpp_tcpl$count(query=mongoQuery(approach = "category")) <1 ){
+      stop("The htpp_tcpl collection has no category documents.  These are required to fill in htpp_bmc. Please ensure htpp_tcpl is created correctly before proceeding.")
+    }
+    htpp_bmc <- mongo(collection = "htpp_bmc", url = mongoUrl, verbose = getOption("verbose"))
+    #if rerun == TRUE delete category documents in htpp_bmc
+    if(rerun == TRUE){
+      htpp_bmc$remove(query = mongoQuery(approach = "category"))
+    }
+    # index
+    htpp_bmc$index(add = '{"pg_id" : 1, "stype": 1, "cell_type": 1, "chem_id": 1, "approach": 1, "endpoint": 1}')
+
+
+    CPData <- data.table(htpp_tcpl$find(query = mongoQuery(approach = "category")))
+
+
+    # Apply `thresholds`; identify valid BMCs
+    CPData <- CPData %>%
+      dplyr::mutate(bmc = ifelse(hitcall > hitCall, bmd, NA),
+                    bmc = ifelse(bmc > max_conc, bmc_max, bmc),
+                    bmc = ifelse(bmc < min_conc/bmc_min, min_conc/bmc_min, bmc),
+                    bmc = signif(bmc, 3),
+                    cp_flag = ifelse(!is.na(bmc) & bmc < min_conc, T, F),
+                    cp_flag = ifelse(n_conc < 4, NA, cp_flag))
+
+
+    # Write into htpp_bmc
+
+
+    for(i in 1:dim(CPData)[1]){
+      htpp_bmc$insert(CPData[i,], auto_unbox = TRUE, na = "null")
+    }
+
+    #count the number of inserted documents
+    if (htpp_bmc$count(query = mongoQuery(approach = "category")) != htpp_tcpl$count(query = mongoQuery(approach = "category"))){
+      warning(paste("Expected", htpp_tcpl$count(query = mongoQuery(approach = "category")), "documents added to htpp_bmc, based on category information from htpp_tcpl, instead there are", htpp_bmc$count(query = mongoQuery(approach = "category"))))
+    }
+  } else {
+    #---------------------------------------------------------------------------------------------#
+    # 1.Apply the thresholds & move data from htpp_tcpl --> htpp_bmc
+    #---------------------------------------------------------------------------------------------#
+
+    ## 1.a) load data
+    if(file.exists(paste(json_collection_path,"htpp_tcpl.JSON",sep="/"))){
+      htpp_tcpl  <-data.table(fromJSON(txt=paste(json_collection_path,"htpp_tcpl.JSON",sep="/")))
+      htpp_tcpl[htpp_tcpl == "NA"] <- NA
+      if(nrow(htpp_tcpl[approach=="category"])<1){
+        stop("The there are no category-level documents in htpp_tcpl. These are needed to generate htpp_bmc.  Please ensure htpp_tcpl is filled correctly before proceeding.")
+      }
+    } else {
+      stop("htpp_htpp_tcpl collection is needed for this function, but is empty.  Check your json_collection_path parameter.")
+    }
+
+    if(file.exists(paste(json_collection_path,"htpp_bmc.JSON",sep="/"))){
+      htpp_bmc  <-data.table(fromJSON(txt=paste(json_collection_path,"htpp_bmc.JSON",sep="/")))
+      htpp_bmc[htpp_bmc == "NA"] <- NA
+    } else {
+      htpp_bmc<-data.table()
+    }
+    #if rerun == TRUE delete category documents in htpp_bmc
+    if(rerun == TRUE){
+      htpp_bmc<-htpp_bmc[!(approach=="category")]
+    }
+
+
+
+    CPData <- htpp_tcpl[approach=="category"]
+
+
+    # Apply `thresholds`; identify valid BMCs
+    CPData <- CPData %>%
+      dplyr::mutate(bmc = ifelse(hitcall > hitCall, bmd, NA),
+                    bmc = ifelse(bmc > max_conc, bmc_max, bmc),
+                    bmc = ifelse(bmc < min_conc/bmc_min, min_conc/bmc_min, bmc),
+                    bmc = signif(bmc, 3),
+                    cp_flag = ifelse(!is.na(bmc) & bmc < min_conc, T, F),
+                    cp_flag = ifelse(n_conc < 4, NA, cp_flag))
+
+
+    # Write into htpp_bmc
+
+
+    for(i in 1:dim(CPData)[1]){
+      htpp_bmc<-rbind(htpp_bmc, CPData[i,])
+    }
+
+    #count the number of inserted documents
+    if (nrow(htpp_bmc[approach=="category"]) != nrow(htpp_tcpl[approach=="category"])){
+      warning(paste("Expected", nrow(htpp_tcpl[approach=="category"]), "documents added to htpp_bmc, based on category information from htpp_tcpl, instead there are", nrow(htpp_bmc[approach=="category"])))
+    }
+    bmcJSON<-toJSON(htpp_bmc, na="string", digits = 8)
+    write(bmcJSON, file=paste(json_collection_path,"htpp_bmc.JSON",sep="/"))
   }
+}
 
-  htpp_bmc <- mongo(collection = "htpp_bmc", url = mongoUrl, verbose = getOption("verbose"))
+#' Add feature Mahalanobis distance information to htpp_bmc collection
+#'
+#' @param mongoUrl character string: URL to connect to MongoDB for HTPP dataset; can be created using the mongoURL function in htpp.pl
+#' @param hitCall numeric (between 0-1): Hitcall threshold from tcplfit2 to use for filtering good BMD values; default is 0.9
+#' @param bmc_max numeric: The maximum bmc value if bmd > highest tested conc; default is NA
+#' @param bmc_min numeric: Defines the denominator for calculating the minimum bmc value for cases where the bmc is less that the lowest tested conc (i.e., minimum tested conc/bmc_min); default is 10^0.5
+#' @param rerun boolean: rerun = TRUE will drop existing entries in htpp_bmc for approach = "global" and endpoint = "global", and reinsert; FALSE by default
+#' @param use_db boolean: Determines whether mongoDB will be used or not; default is TRUE
+#' @param json_collection_path  character: Full file path to where JSON collections will be stored
+#'
+#' @import data.table
+#' @import plyr
+#' @import dplyr
+#' @import tidyr
+#' @import jsonlite
+#' @import mongolite
+#' @import stringr
+#' @import tictoc
+#' @import tibble
+#'
+#'
+#' @export
+#'
+generate_htppBmc_feature <- function(mongoUrl="", hitCall=0.9, bmc_max=NA, bmc_min=10^0.5, rerun=FALSE, use_db=T, json_collection_path=""){
+  if (use_db==T){
+    #---------------------------------------------------------------------------------------------#
+    # 1.Apply the thresholds & move data from htpp_tcpl --> htpp_bmc
+    #---------------------------------------------------------------------------------------------#
 
-  #if rerun == TRUE delete global documents in htpp_pac
-  if(rerun == TRUE){
-    htpp_bmc$remove(query = mongoQuery(approach = "category"))
+    ## 1.a) load data
+    htpp_tcpl <- mongo(collection = "htpp_tcpl", url = mongoUrl, verbose = getOption("verbose"))
+    if(htpp_tcpl$count(query=mongoQuery(approach = "feature")) <1 ){
+      stop("The htpp_tcpl collection has no feature documents.  These are required to fill in htpp_bmc. Htpp_tcpl needs to first be created and contain documents for approach = 'global', and then stop the function.")
+    }
+
+    htpp_bmc <- mongo(collection = "htpp_bmc", url = mongoUrl, verbose = getOption("verbose"))
+
+    #if rerun == TRUE delete global documents in htpp_pac
+    if(rerun == TRUE){
+      htpp_bmc$remove(query = mongoQuery(approach = "feature"))
+    }
+
+    # index
+    htpp_bmc$index(add = '{"pg_id" : 1, "stype": 1, "cell_type": 1, "chem_id": 1, "approach": 1, "endpoint": 1}')
+
+
+    CPData <- data.table(htpp_tcpl$find(query = mongoQuery(approach = "feature")))
+
+
+    # Apply `thresholds`; identify valid BMCs
+    CPData <- CPData %>%
+      dplyr::mutate(bmc = ifelse(hitcall > hitCall, bmd, NA),
+                    bmc = ifelse(bmc > max_conc, bmc_max, bmc),
+                    bmc = ifelse(bmc < min_conc/bmc_min, min_conc/bmc_min, bmc),
+                    bmc = signif(bmc, 3),
+                    cp_flag = ifelse(!is.na(bmc) & bmc < min_conc, T, F),
+                    cp_flag = ifelse(n_conc < 4, NA, cp_flag))
+
+
+    # Write into htpp_bmc
+
+
+    for(i in 1:dim(CPData)[1]){
+      htpp_bmc$insert(CPData[i,], auto_unbox = TRUE, na = "null")
+    }
+
+    #count the number of inserted documents
+    if (htpp_bmc$count(query = mongoQuery(approach = "feature")) != htpp_tcpl$count(query = mongoQuery(approach = "feature"))){
+      warning(paste("Expected", htpp_tcpl$count(query = mongoQuery(approach = "feature")), "documents added to htpp_bmc, based on feature information from htpp_tcpl, instead there are", htpp_bmc$count(query = mongoQuery(approach = "feature"))))
+    }
+  } else{
+    #---------------------------------------------------------------------------------------------#
+    # 1.Apply the thresholds & move data from htpp_tcpl --> htpp_bmc
+    #---------------------------------------------------------------------------------------------#
+
+    ## 1.a) load data
+    if(file.exists(paste(json_collection_path,"htpp_tcpl.JSON",sep="/"))){
+      htpp_tcpl  <-data.table(fromJSON(txt=paste(json_collection_path,"htpp_tcpl.JSON",sep="/")))
+      htpp_tcpl[htpp_tcpl == "NA"] <- NA
+      CPData<-htpp_tcpl[approach =="feature"]
+      if(nrow(CPData)<1){
+        stop("The there are no feature documents in htpp_tcpl. These are needed to add to htpp_bmc.  Please ensure htpp_tcpl is filled correctly before proceeding.")
+      }
+    } else {
+      stop("htpp_tcpl collection is needed for this function, but is empty.  Check your json_collection_path parameter.")
+    }
+
+    if(file.exists(paste(json_collection_path,"htpp_bmc.JSON",sep="/"))){
+      htpp_bmc  <-data.table(fromJSON(txt=paste(json_collection_path,"htpp_bmc.JSON",sep="/")))
+      htpp_bmc[htpp_bmc == "NA"] <- NA
+    } else {
+      stop("htpp_bmc collection is needed for this function, but is empty.  Check your json_collection_path parameter.")
+    }
+
+    #if rerun == TRUE delete global documents in htpp_pac
+    if(rerun == TRUE){
+      htpp_bmc<-htpp_bmc[approach != "feature"]
+    }
+
+    # Apply `thresholds`; identify valid BMCs
+    CPData <- CPData %>%
+      dplyr::mutate(bmc = ifelse(hitcall > hitCall, bmd, NA),
+                    bmc = ifelse(bmc > max_conc, bmc_max, bmc),
+                    bmc = ifelse(bmc < min_conc/bmc_min, min_conc/bmc_min, bmc),
+                    bmc = signif(bmc, 3),
+                    cp_flag = ifelse(!is.na(bmc) & bmc < min_conc, T, F),
+                    cp_flag = ifelse(n_conc < 4, NA, cp_flag))
+
+
+    # Write into htpp_bmc
+
+
+    for(i in 1:dim(CPData)[1]){
+      htpp_bmc<-rbind(htpp_bmc, CPData[i,])
+    }
+
+    bmcJSON<-toJSON(htpp_bmc, na="string", digits = 8)
+    write(bmcJSON, file=paste(json_collection_path,"htpp_bmc.JSON",sep="/"))
+
+    #count the number of inserted documents
+    if (nrow(htpp_bmc[approach=="feature"]) != nrow(htpp_tcpl[approach=="feature"])){
+      warning(paste("Expected", nrow(htpp_tcpl[approach=="feature"]), "documents added to htpp_bmc, based on feature information from htpp_tcpl, instead there are", nrow(htpp_bmc[approach=="feature"])))
+    }
   }
-
-  # index
-  htpp_bmc$index(add = '{"pg_id" : 1, "stype": 1, "cell_type": 1, "chem_id": 1, "approach": 1, "endpoint": 1}')
-
-
-  CPData <- data.table(htpp_tcpl$find(query = mongoQuery(approach = "category")))
-
-
-  # Apply `thresholds`; identify valid BMCs
-  CPData <- CPData %>%
-    dplyr::mutate(bmc = ifelse(hitcall > hitCall, bmd, NA),
-                  bmc = ifelse(bmc > max_conc, bmc_max, bmc),
-                  bmc = ifelse(bmc < min_conc/bmc_min, min_conc/bmc_min, bmc),
-                  bmc = signif(bmc, 3),
-                  cp_flag = ifelse(!is.na(bmc) & bmc < min_conc, T, F),
-                  cp_flag = ifelse(n_conc < 4, NA, cp_flag))
-
-
-  # Write into htpp_bmc
-
-
-  for(i in 1:dim(CPData)[1]){
-    htpp_bmc$insert(CPData[i,], auto_unbox = TRUE, na = "null")
-  }
-
-  #count the number of inserted documents
-  if (htpp_bmc$count(query = mongoQuery(approach = "category")) != htpp_tcpl$count(query = mongoQuery(approach = "category"))){
-    warning(paste("Expected", htpp_tcpl$count(query = mongoQuery(approach = "category")), "documents added to htpp_bmc, based on category information from htpp_tcpl, instead there are", htpp_bmc$count(query = mongoQuery(approach = "category"))))
-  }
-
-
-
 }
 
 #' generate htpp_pac from htpp_bmc and add global mahalanobis distance records to htpp_pac
 #'
 #' @param mongoUrl character string: URL to connect to MongoDB for HTPP dataset; can be created using the mongoURL function in htpp.pl
 #' @param hit_n_conc numeric: Number of test concentrations needed during curve fitting to determine if a PAC is a hit; default is 4
-#' @param rerun Boolean: TRUE will drop existing entries in htpp_bmc for approach = "global" and endpoint = "global", and reinsert; default is FALSE
+#' @param rerun boolean: TRUE will drop existing entries in htpp_bmc for approach = "global" and endpoint = "global", and reinsert; default is FALSE
+#'@param use_db boolean: Determines whether mongoDB will be used or not; default is TRUE
+#' @param json_collection_path  character: Full file path to where JSON collections will be stored
 #'
 #' @import data.table
 #' @import plyr
@@ -1278,61 +2395,130 @@ generate_htppBmc_catMah <- function(mongoUrl, hitCall=0.95, bmc_max=NA, bmc_min=
 #'
 #' @export generate_htppPac_globalMah
 #'
-generate_htppPac_globalMah <- function(mongoUrl, hit_n_conc=4, rerun=FALSE){
+generate_htppPac_globalMah <- function(mongoUrl="", hit_n_conc=4, rerun=FALSE, use_db=TRUE, json_collection_path=""){
 
-  htpp_bmc <- mongo(collection = "htpp_bmc", url = mongoUrl, verbose = getOption("verbose"))
-  CPData <- data.table(htpp_bmc$find(query = mongoQuery(approach = "global", endpoint = "global")))
-  if (length(CPData) <1){
-    stop("htpp_bmc collection has no records with approach:'global' and endpoint:'global'.  These are needed to generate htpp_pac.  Please check that htpp_bmc was generated correctly.")
+  if (use_db==T){
+    htpp_bmc <- mongo(collection = "htpp_bmc", url = mongoUrl, verbose = getOption("verbose"))
+    CPData <- data.table(htpp_bmc$find(query = mongoQuery(approach = "global", endpoint = "global")))
+    if (length(CPData) <1){
+      stop("htpp_bmc collection has no records with approach:'global' and endpoint:'global'.  These are needed to generate htpp_pac.  Please check that htpp_bmc was generated correctly.")
+    }
+    PAC <- CPData %>% select(pg_id, stype, cell_type, chem_id, min_conc, max_conc, n_conc,
+                             approach, top_over_cutoff, hitcall, bmc, cp_flag) %>%
+      dplyr::rename(pac = bmc) %>%
+      dplyr::mutate(hit = ifelse(n_conc < hit_n_conc, NA, !is.na(pac)))
+
+
+
+    Trt <- mongo(collection = "htpp_well_norm", url = mongoUrl, verbose = getOption("verbose"))$find(fields = '{ "_id":0, "pg_id":1, "stype" :1, "cell_type":1, "chem_id":1, "dose_level":1, "conc":1 }')
+
+    Trt <- Trt %>% filter(stype != "vehicle control")  %>% distinct() %>%
+      dplyr::arrange(pg_id, chem_id, dose_level)
+
+
+    Data <- Trt %>% left_join(PAC) %>% filter(conc > pac | (cp_flag & dose_level == 1))
+
+    LOEC <- Data %>% group_by(pg_id, stype, cell_type, chem_id, cp_flag) %>%
+      dplyr::summarise(cp_loec_dose_level = min(dose_level)) %>% ungroup() %>%
+      dplyr::mutate(cp_loec_dose_level = ifelse(cp_flag, 0, cp_loec_dose_level))
+
+    PAC <- PAC %>% left_join(LOEC) %>%
+      dplyr::mutate_at(.vars = c("min_conc", "max_conc", "pac"), .funs = "log10") %>%
+      dplyr::mutate_at(.vars = c("min_conc", "max_conc", "top_over_cutoff", "hitcall", "pac"), .funs = "round", 3)
+
+    message(paste0(capture.output(table(PAC$stype, PAC$cp_loec_dose_level, PAC$cell_type, useNA = "ifany")), collapse = "\n"))
+
+    htpp_pac <- mongo(collection = "htpp_pac", url = mongoUrl, verbose = getOption("verbose"))
+    htpp_pac$count(query = mongoQuery(approach = "global"))
+
+
+    if(rerun == TRUE){
+      htpp_pac$remove(query = mongoQuery(approach = "global"))
+    }
+
+    htpp_pac$index(add = '{"pg_id" : 1, "stype": 1, "cell_type":1, "chem_id": 1, "approach": 1}')
+
+
+    for(i in 1:dim(PAC)[1]){
+      htpp_pac$insert(PAC[i,], auto_unbox=TRUE, na = "null")
+    }
+
+    message(paste0(capture.output(table(PAC$stype, PAC$hit, useNA = "ifany")), collapse = "\n"))
+
+    bmcCount<-htpp_bmc$count(query = mongoQuery(approach = "global", endpoint = "global"))
+    pacCount<-htpp_pac$count(query = mongoQuery(approach = "global"))
+    if(bmcCount != pacCount){
+      warning(paste("Expected", bmcCount, "documents in htpp_pac based on htpp_bmc.  Instead, there are", pacCount, "documents."))
+    }
+
+  }else{
+
+
+    if(file.exists(paste(json_collection_path,"htpp_bmc.JSON",sep="/"))){
+      htpp_bmc  <-data.table(fromJSON(txt=paste(json_collection_path,"htpp_bmc.JSON",sep="/")))
+      htpp_bmc[htpp_bmc == "NA"] <- NA
+      CPData<-htpp_bmc[approach =="global" & endpoint =="global"]
+      if(nrow(CPData)<1){
+        stop("The there are no global documents in htpp_bmc. These are needed to generate htpp_pac.  Please ensure htpp_bmc is filled correctly before proceeding.")
+      }
+    } else {
+      stop("htpp_bmc collection is needed for this function, but is empty.  Check your json_collection_path parameter.")
+    }
+    PAC <- CPData %>% select(pg_id, stype, cell_type, chem_id, min_conc, max_conc, n_conc,
+                             approach, top_over_cutoff, hitcall, bmc, cp_flag) %>%
+      dplyr::rename(pac = bmc) %>%
+      dplyr::mutate(hit = ifelse(n_conc < hit_n_conc, NA, !is.na(pac)))
+
+    if(file.exists(paste(json_collection_path,"htpp_well_norm.JSON",sep="/"))){
+      htpp_well_norm  <-data.table(fromJSON(txt=paste(json_collection_path,"htpp_well_norm.JSON",sep="/")))
+      htpp_well_norm[htpp_well_norm == "NA"] <- NA
+    } else {
+      stop("htpp_well_norm collection is needed for this function, but is empty.  Check your json_collection_path parameter.")
+    }
+
+    Trt <- htpp_well_norm[stype != "vehicle control"]  %>% distinct() %>%
+      dplyr::arrange(pg_id, chem_id, dose_level)
+
+
+    Data <- Trt %>% left_join(PAC) %>% filter(conc > pac | (cp_flag & dose_level == 1))
+
+    LOEC <- Data %>% group_by(pg_id, stype, cell_type, chem_id, cp_flag) %>%
+      dplyr::summarise(cp_loec_dose_level = min(dose_level)) %>% ungroup() %>%
+      dplyr::mutate(cp_loec_dose_level = ifelse(cp_flag, 0, cp_loec_dose_level))
+
+    PAC <- PAC %>% left_join(LOEC) %>%
+      dplyr::mutate_at(.vars = c("min_conc", "max_conc", "pac"), .funs = "log10") %>%
+      dplyr::mutate_at(.vars = c("min_conc", "max_conc", "top_over_cutoff", "hitcall", "pac"), .funs = "round", 3)
+
+    message(paste0(capture.output(table(PAC$stype, PAC$cp_loec_dose_level, PAC$cell_type, useNA = "ifany")), collapse = "\n"))
+
+    if(file.exists(paste(json_collection_path,"htpp_pac.JSON",sep="/")) & rerun == TRUE){
+      htpp_pac <- data.table(fromJSON(txt=paste(json_collection_path,"htpp_pac.JSON",sep="/")))
+      htpp_pac[htpp_pac == "NA"] <- NA
+      htpp_pac <- htpp_pac[!(approach=="global" & endpoint=="global")] #if rerun == TRUE remove global fits from collection
+    }else if(file.exists(paste(json_collection_path,"htpp_pac.JSON",sep="/")) & rerun == FALSE){
+      htpp_pac <- data.table(fromJSON(txt=paste(json_collection_path,"htpp_pac.JSON",sep="/")))
+      htpp_pac[htpp_pac == "NA"] <- NA
+    }else{
+      htpp_pac <- data.table()
+    }
+
+
+    for(i in 1:dim(PAC)[1]){
+      htpp_pac<-rbind(htpp_pac, PAC[i,])
+    }
+
+    message(paste0(capture.output(table(PAC[,stype], PAC[,hit], useNA = "ifany")), collapse = "\n"))
+
+    pacJSON<-toJSON(htpp_pac, na="string", digits = 8)
+    write(pacJSON, file=paste(json_collection_path,"htpp_pac.JSON",sep="/"))
+
+    bmcCount<-htpp_bmc[approach=="global" & endpoint=="global"] %>% nrow()
+    pacCount<-htpp_pac[approach=="global"] %>% nrow()
+    if(bmcCount != pacCount){
+      warning(paste("Expected", bmcCount, "documents in htpp_pac based on htpp_bmc.  Instead, there are", pacCount, "documents."))
+    }
   }
-  PAC <- CPData %>% select(pg_id, stype, cell_type, chem_id, min_conc, max_conc, n_conc,
-                           approach, top_over_cutoff, hitcall, bmc, cp_flag) %>%
-    dplyr::rename(pac = bmc) %>%
-    dplyr::mutate(hit = ifelse(n_conc < hit_n_conc, NA, !is.na(pac)))
-
-
-
-  Trt <- mongo(collection = "htpp_well_norm", url = mongoUrl, verbose = getOption("verbose"))$find(fields = '{ "_id":0, "pg_id":1, "stype" :1, "cell_type":1, "chem_id":1, "dose_level":1, "conc":1 }')
-
-  Trt <- Trt %>% filter(stype != "vehicle control")  %>% distinct() %>%
-    dplyr::arrange(pg_id, chem_id, dose_level)
-
-
-  Data <- Trt %>% left_join(PAC) %>% filter(conc > pac | (cp_flag & dose_level == 1))
-
-  LOEC <- Data %>% group_by(pg_id, stype, cell_type, chem_id, cp_flag) %>%
-    dplyr::summarise(cp_loec_dose_level = min(dose_level)) %>% ungroup() %>%
-    dplyr::mutate(cp_loec_dose_level = ifelse(cp_flag, 0, cp_loec_dose_level))
-
-  PAC <- PAC %>% left_join(LOEC) %>%
-    dplyr::mutate_at(.vars = c("min_conc", "max_conc", "pac"), .funs = "log10") %>%
-    dplyr::mutate_at(.vars = c("min_conc", "max_conc", "top_over_cutoff", "hitcall", "pac"), .funs = "round", 3)
-
-  message(paste0(capture.output(table(PAC$stype, PAC$cp_loec_dose_level, PAC$cell_type, useNA = "ifany")), collapse = "\n"))
-
-  htpp_pac <- mongo(collection = "htpp_pac", url = mongoUrl, verbose = getOption("verbose"))
-  htpp_pac$count(query = mongoQuery(approach = "global"))
-
-
-  if(rerun == TRUE){
-    htpp_pac$remove(query = mongoQuery(approach = "global"))
-  }
-
-  htpp_pac$index(add = '{"pg_id" : 1, "stype": 1, "cell_type":1, "chem_id": 1, "approach": 1}')
-
-
-  for(i in 1:dim(PAC)[1]){
-    htpp_pac$insert(PAC[i,], auto_unbox=TRUE, na = "null")
-  }
-
-  message(paste0(capture.output(table(PAC$stype, PAC$hit, useNA = "ifany")), collapse = "\n"))
-
-  bmcCount<-htpp_bmc$count(query = mongoQuery(approach = "global", endpoint = "global"))
-  pacCount<-htpp_pac$count(query = mongoQuery(approach = "global"))
-  if(bmcCount != pacCount){
-    warning(paste("Expected", bmcCount, "documents in htpp_pac based on htpp_bmc.  Instead, there are", pacCount, "documents."))
-  }
-
 
 }
 
@@ -1341,6 +2527,8 @@ generate_htppPac_globalMah <- function(mongoUrl, hit_n_conc=4, rerun=FALSE){
 #' @param mongoUrl character string: URL to connect to MongoDB for HTPP dataset; can be created using the mongoURL function in htpp.pl
 #' @param hit_n_conc numeric: Number of test concentrations needed during curve fitting to determine if a PAC is a hit; default is 4
 #' @param rerun boolean: rerun = TRUE will drop existing entries in htpp_bmc for approach = "category", and reinsert; FALSE by default
+#' @param use_db  boolean: Determines whether mongoDB will be used or not; default is TRUE
+#' @param json_collection_path  character: Full file path to where JSON collections will be stored
 #'
 #' @import data.table
 #' @import plyr
@@ -1355,64 +2543,196 @@ generate_htppPac_globalMah <- function(mongoUrl, hit_n_conc=4, rerun=FALSE){
 #'
 #' @export generate_htppPac_catMah
 #'
-generate_htppPac_catMah <- function(mongoUrl, hit_n_conc=4,rerun=FALSE){
+generate_htppPac_catMah <- function(mongoUrl="", hit_n_conc=4,rerun=FALSE, use_db=T, json_collection_path=""){
 
-  htpp_bmc<-mongo(collection = "htpp_bmc", url = mongoUrl, verbose = getOption("verbose"))
-  if(htpp_bmc$count(query = mongoQuery(approach = "category"))<1){
-    stop("The htpp_bmc collection needs to first be created and contain documents for approach = 'category'. Please ensure those records were input correctly before proceeding.")
+  if(use_db==T){
+    htpp_bmc<-mongo(collection = "htpp_bmc", url = mongoUrl, verbose = getOption("verbose"))
+    if(htpp_bmc$count(query = mongoQuery(approach = "category"))<1){
+      stop("The htpp_bmc collection needs to first be created and contain documents for approach = 'category'. Please ensure those records were input correctly before proceeding.")
+    }
+
+    CPData<-htpp_bmc$find(query = mongoQuery(approach = "category"))
+
+
+    PAC <- CPData %>% dplyr::group_by(pg_id, stype, cell_type, chem_id, min_conc, max_conc, n_conc, approach) %>%
+      dplyr::summarise(top_over_cutoff = maxJN(top_over_cutoff),
+                       hitcall = maxJN(hitcall),
+                       pac = minJN(bmc),
+                       cp_flag = any(cp_flag),
+                       n_cat = sum(!is.na(bmc))) %>% ungroup() %>%
+      dplyr::mutate(hit = ifelse(n_conc < 4, NA, !is.na(pac)),
+                    n_cat = ifelse(n_conc < 4, NA, as.integer(n_cat)),
+                    hitcall = ifelse(n_conc < 4, NA, hitcall))
+
+
+    # Get the treatment info to define the LOEC
+
+    Trt <- mongo(collection = "htpp_well_norm", url = mongoUrl, verbose = getOption("verbose"))$find(fields = '{ "_id":0, "pg_id":1, "stype" :1, "cell_type": 1, "chem_id":1, "dose_level":1, "conc":1 }')
+
+    Trt <- Trt %>% dplyr::filter(stype != "vehicle control")  %>% dplyr::distinct() %>%
+      dplyr::arrange(pg_id, cell_type, chem_id, dose_level)
+
+    # retain only dose-levels that are above the PAC
+
+    Data <- Trt %>% left_join(PAC) %>% filter(conc > pac | (cp_flag & dose_level == 1))
+
+    LOEC <- Data %>% group_by(pg_id, stype, cell_type, chem_id, cp_flag) %>%
+      dplyr::summarise(cp_loec_dose_level = min(dose_level)) %>% ungroup() %>%
+      dplyr::mutate(cp_loec_dose_level = ifelse(cp_flag, 0, cp_loec_dose_level))
+
+    PAC <- PAC %>% left_join(LOEC) %>%
+      dplyr::mutate_at(.vars = c("min_conc", "max_conc", "pac"), .funs="log10") %>%
+      dplyr::mutate_at(.vars = c("min_conc", "max_conc", "top_over_cutoff", "hitcall", "pac"), .funs = "round", 3)
+
+    message(paste0(capture.output(table(PAC$stype, PAC$cp_loec_dose_level, PAC$cell_type, useNA = "ifany")), collapse = "\n"))
+
+
+    ## 3.b) Write into htpp_pac
+    htpp_pac <- mongo(collection = "htpp_pac", url = mongoUrl, verbose = getOption("verbose"))
+
+    #if rerun == TRUE delete category documents in htpp_pac
+    if(rerun == TRUE){
+      htpp_pac$remove(query = mongoQuery(approach = "category"))
+    }
+
+    #insert documents into htpp_pac
+    for(i in 1:dim(PAC)[1]){
+      htpp_pac$insert(PAC[i,], auto_unbox = TRUE, na = "null")
+    }
+
+    if (htpp_pac$count(query = mongoQuery(approach = "category")) != htpp_bmc$count(query = mongoQuery(approach = "category"))/49){
+      warning(paste("Expected", htpp_bmc$count(query = mongoQuery(approach = "category"))/49, "documents added to htpp_pac based on htpp_bmc.  Instead, there are", htpp_pac$count(query = mongoQuery(approach = "category")), "documents."))
+    }
+  } else {
+    if(file.exists(paste(json_collection_path,"htpp_bmc.JSON",sep="/"))){
+      htpp_bmc  <-data.table(fromJSON(txt=paste(json_collection_path,"htpp_bmc.JSON",sep="/")))
+      htpp_bmc[htpp_bmc == "NA"] <- NA
+      CPData<-htpp_bmc[approach =="category"]
+      if(nrow(CPData)<1){
+        stop("The there are no category-level documents in htpp_bmc. These are needed to generate htpp_pac.  Please ensure htpp_bmc is filled correctly before proceeding.")
+      }
+    } else {
+      stop("htpp_bmc collection is needed for this function, but is empty.  Check your json_collection_path parameter.")
+    }
+
+    PAC <- CPData %>% dplyr::group_by(pg_id, stype, cell_type, chem_id, min_conc, max_conc, n_conc, approach) %>%
+      dplyr::summarise(top_over_cutoff = maxJN(top_over_cutoff),
+                       hitcall = maxJN(hitcall),
+                       pac = minJN(bmc),
+                       cp_flag = any(cp_flag),
+                       n_cat = sum(!is.na(bmc))) %>% ungroup() %>%
+      dplyr::mutate(hit = ifelse(n_conc < 4, NA, !is.na(pac)),
+                    n_cat = ifelse(n_conc < 4, NA, as.integer(n_cat)),
+                    hitcall = ifelse(n_conc < 4, NA, hitcall))
+
+
+    # Get the treatment info to define the LOEC
+
+    if(file.exists(paste(json_collection_path,"htpp_well_norm.JSON",sep="/"))){
+      htpp_well_norm  <-data.table(fromJSON(txt=paste(json_collection_path,"htpp_well_norm.JSON",sep="/")))
+      htpp_well_norm[htpp_well_norm == "NA"] <- NA
+    } else {
+      stop("htpp_well_norm collection is needed for this function, but is empty.  Check your json_collection_path parameter.")
+    }
+
+    Trt <- htpp_well_norm[stype != "vehicle control"]  %>% dplyr::distinct() %>%
+      dplyr::arrange(pg_id, cell_type, chem_id, dose_level)
+
+    # retain only dose-levels that are above the PAC
+
+    Data <- Trt %>% left_join(PAC) %>% filter(conc > pac | (cp_flag & dose_level == 1))
+
+    LOEC <- Data %>% group_by(pg_id, stype, cell_type, chem_id, cp_flag) %>%
+      dplyr::summarise(cp_loec_dose_level = min(dose_level)) %>% ungroup() %>%
+      dplyr::mutate(cp_loec_dose_level = ifelse(cp_flag, 0, cp_loec_dose_level))
+
+    PAC <- PAC %>% left_join(LOEC) %>%
+      dplyr::mutate_at(.vars = c("min_conc", "max_conc", "pac"), .funs="log10") %>%
+      dplyr::mutate_at(.vars = c("min_conc", "max_conc", "top_over_cutoff", "hitcall", "pac"), .funs = "round", 3)
+
+    message(paste0(capture.output(table(PAC$stype, PAC$cp_loec_dose_level, PAC$cell_type, useNA = "ifany")), collapse = "\n"))
+
+
+    ## 3.b) Write into htpp_pac
+    if(file.exists(paste(json_collection_path,"htpp_pac.JSON",sep="/")) & rerun == TRUE){
+      htpp_pac <- data.table(fromJSON(txt=paste(json_collection_path,"htpp_pac.JSON",sep="/")))
+      htpp_pac[htpp_pac == "NA"] <- NA
+      htpp_pac <- htpp_pac[!(approach=="category")] #if rerun == TRUE remove category fits from collection
+    }else if(file.exists(paste(json_collection_path,"htpp_pac.JSON",sep="/")) & rerun == FALSE){
+      htpp_pac <- data.table(fromJSON(txt=paste(json_collection_path,"htpp_pac.JSON",sep="/")))
+      htpp_pac[htpp_pac == "NA"] <- NA
+    }else{
+      htpp_pac <- data.table()
+    }
+
+    #insert documents into htpp_pac
+    for(i in 1:dim(PAC)[1]){
+      htpp_pac <- rbind(htpp_pac, PAC[i,], fill = TRUE)
+    }
+
+    pacJSON<-toJSON(htpp_pac, na="string", digits = 8)
+    write(pacJSON, file=paste(json_collection_path,"htpp_pac.JSON",sep="/"))
+
+
+    if (nrow(htpp_pac[approach=="category"]) != nrow(htpp_bmc[approach=="category"])/49){
+      warning(paste("Expected", nrow(htpp_bmc[approach=="category"])/49, "documents added to htpp_pac based on htpp_bmc.  Instead, there are", nrow(htpp_pac[approach=="category"]), "documents."))
+    }
   }
-
-  CPData<-htpp_bmc$find(query = mongoQuery(approach = "category"))
-
-
-  PAC <- CPData %>% dplyr::group_by(pg_id, stype, cell_type, chem_id, min_conc, max_conc, n_conc, approach) %>%
-    dplyr::summarise(top_over_cutoff = maxJN(top_over_cutoff),
-                     hitcall = maxJN(hitcall),
-                     pac = minJN(bmc),
-                     cp_flag = any(cp_flag),
-                     n_cat = sum(!is.na(bmc))) %>% ungroup() %>%
-    dplyr::mutate(hit = ifelse(n_conc < 4, NA, !is.na(pac)),
-                  n_cat = ifelse(n_conc < 4, NA, as.integer(n_cat)),
-                  hitcall = ifelse(n_conc < 4, NA, hitcall))
+}
 
 
-  # Get the treatment info to define the LOEC
+#' Adding study-level metadata to htpp_study collection
+#'
+#' @param input data.frame/data.table: A data frame with study information; should include the following columns: "cell_type", "stype", "exposure_duration", "seeding_density"
+#' @param rerun boolean: Whether you want to clear the mongo database as you go and refill it; false by default
+#' @param mongoUrl character string: A mongoUrl with credentials to access the database
+#' @param use_db boolean: Determines whether mongoDB will be used or not; default is TRUE
+#' @param json_collection_path character: Full file path to where JSON collections will be stored
+#'
+#' @import data.table
+#' @import jsonlite
+#' @import mongolite
+#' @import stringr
+#'
+#'
+#' @export generate_htppStudy
+#'
+generate_htppStudy <- function(input, mongoUrl="", rerun=FALSE, use_db=TRUE, json_collection_path=""){
+  if(use_db == TRUE){
+    htpp_study <- mongo(collection = "htpp_study", url = mongoUrl, verbose = getOption("verbose"))
+    htpp_study$count()
 
-  Trt <- mongo(collection = "htpp_well_norm", url = mongoUrl, verbose = getOption("verbose"))$find(fields = '{ "_id":0, "pg_id":1, "stype" :1, "cell_type": 1, "chem_id":1, "dose_level":1, "conc":1 }')
-
-  Trt <- Trt %>% dplyr::filter(stype != "vehicle control")  %>% dplyr::distinct() %>%
-    dplyr::arrange(pg_id, cell_type, chem_id, dose_level)
-
-  # retain only dose-levels that are above the PAC
-
-  Data <- Trt %>% left_join(PAC) %>% filter(conc > pac | (cp_flag & dose_level == 1))
-
-  LOEC <- Data %>% group_by(pg_id, stype, cell_type, chem_id, cp_flag) %>%
-    dplyr::summarise(cp_loec_dose_level = min(dose_level)) %>% ungroup() %>%
-    dplyr::mutate(cp_loec_dose_level = ifelse(cp_flag, 0, cp_loec_dose_level))
-
-  PAC <- PAC %>% left_join(LOEC) %>%
-    dplyr::mutate_at(.vars = c("min_conc", "max_conc", "pac"), .funs="log10") %>%
-    dplyr::mutate_at(.vars = c("min_conc", "max_conc", "top_over_cutoff", "hitcall", "pac"), .funs = "round", 3)
-
-  message(paste0(capture.output(table(PAC$stype, PAC$cp_loec_dose_level, PAC$cell_type, useNA = "ifany")), collapse = "\n"))
+    ##add index
+    mongo(collection="htpp_study", url=mongoUrl, verbose=getOption("verbose"))$index(add = '{"stype":1}')
 
 
-  ## 3.b) Write into htpp_pac
-  htpp_pac <- mongo(collection = "htpp_pac", url = mongoUrl, verbose = getOption("verbose"))
+    if(rerun == TRUE){
+      htpp_study$drop() #delete everything that was in it
+    }
 
-  #if rerun == TRUE delete category documents in htpp_pac
-  if(rerun == TRUE){
-    htpp_pac$remove(query = mongoQuery(approach = "category"))
-  }
+    #insert into collection
+    htpp_study$insert(input, auto_unbox=TRUE, na = "null")
 
-  #insert documents into htpp_pac
-  for(i in 1:dim(PAC)[1]){
-    htpp_pac$insert(PAC[i,], auto_unbox = TRUE, na = "null")
-  }
+    #give output message
+    message(paste("Inserted", nrow(input), "documents into htpp_study collection. htpp_study now contains", htpp_study$count(), "total documents.", sep = " "))
+  }else{
+    if(file.exists(paste(json_collection_path,"htpp_study.JSON",sep="/"))){
+      htpp_study  <-data.table(fromJSON(txt=paste(json_collection_path,"htpp_study.JSON",sep="/")))} else{
+        htpp_study <- data.table() #if no file exists, make an empty datatable.
+      }
 
-  if (htpp_pac$count(query = mongoQuery(approach = "category")) != htpp_bmc$count(query = mongoQuery(approach = "category"))/49){
-    warning(paste("Expected", htpp_bmc$count(query = mongoQuery(approach = "category"))/49, "documents added to htpp_pac based on htpp_bmc.  Instead, there are", htpp_pac$count(query = mongoQuery(approach = "category")), "documents."))
+
+    if(rerun == TRUE){
+      htpp_study <- data.table() #delete everything that was in it
+    }
+
+    #insert into collection
+    htpp_study<-rbind(htpp_study,input)
+
+    #give output message
+    message(paste("Inserted", nrow(input), "documents into htpp_study collection. htpp_study now contains", nrow(htpp_study), "total documents.", sep = " "))
+    studyJSON<-toJSON(htpp_study, na="string", digits = 8)
+    write(studyJSON, file=paste(json_collection_path,"htpp_study.JSON",sep="/"))
   }
 }
 

@@ -9,7 +9,9 @@ viability_controlPlot_htppWell(
   vehicle_control,
   viability_positive_control,
   study_name,
-  mongoUrl
+  mongoUrl = "",
+  use_db = T,
+  json_collection_path = ""
 )
 }
 \arguments{
@@ -22,6 +24,10 @@ viability_controlPlot_htppWell(
 \item{study_name}{character string: name of study to be used for plot titles}
 
 \item{mongoUrl}{character string: The URL of the mongo database holding the collection, with user credentials to access it}
+
+\item{use_db}{boolean: Determines whether mongoDB will be used or not; default is TRUE}
+
+\item{json_collection_path}{character: Full file path to where JSON collections will be stored}
 }
 \description{
 Create plots from htpp_well and write them to the location specified in file_path

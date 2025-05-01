@@ -4,12 +4,21 @@
 \alias{nullProbs_catMah}
 \title{Print out Category-level Null Chemical Maximum Hitcall Probabilities}
 \usage{
-nullProbs_catMah(mongoUrl, null_max_conc = 100)
+nullProbs_catMah(
+  mongoUrl = "",
+  null_max_conc = 100,
+  use_db = T,
+  json_collection_path = ""
+)
 }
 \arguments{
 \item{mongoUrl}{character string: URL to connect to MongoDB for HTPP dataset; can be created using the mongoURL function in htpp.pl}
 
 \item{null_max_conc}{integer: Maximum concentration of Null chemicals; default is 100 (uM)}
+
+\item{use_db}{boolean: Determines whether mongoDB will be used or not; default is TRUE}
+
+\item{json_collection_path}{character: Full file path to where JSON collections will be stored}
 }
 \description{
 Print out Category-level Null Chemical Maximum Hitcall Probabilities

@@ -4,14 +4,24 @@
 \alias{generate_htppPac_globalMah}
 \title{generate htpp_pac from htpp_bmc and add global mahalanobis distance records to htpp_pac}
 \usage{
-generate_htppPac_globalMah(mongoUrl, hit_n_conc = 4, rerun = FALSE)
+generate_htppPac_globalMah(
+  mongoUrl = "",
+  hit_n_conc = 4,
+  rerun = FALSE,
+  use_db = TRUE,
+  json_collection_path = ""
+)
 }
 \arguments{
 \item{mongoUrl}{character string: URL to connect to MongoDB for HTPP dataset; can be created using the mongoURL function in htpp.pl}
 
 \item{hit_n_conc}{numeric: Number of test concentrations needed during curve fitting to determine if a PAC is a hit; default is 4}
 
-\item{rerun}{Boolean: TRUE will drop existing entries in htpp_bmc for approach = "global" and endpoint = "global", and reinsert; default is FALSE}
+\item{rerun}{boolean: TRUE will drop existing entries in htpp_bmc for approach = "global" and endpoint = "global", and reinsert; default is FALSE}
+
+\item{use_db}{boolean: Determines whether mongoDB will be used or not; default is TRUE}
+
+\item{json_collection_path}{character: Full file path to where JSON collections will be stored}
 }
 \description{
 generate htpp_pac from htpp_bmc and add global mahalanobis distance records to htpp_pac

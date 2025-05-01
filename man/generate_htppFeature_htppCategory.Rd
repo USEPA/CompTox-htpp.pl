@@ -7,9 +7,12 @@
 generate_htppFeature_htppCategory(
   inputPath,
   PlateID,
-  mongoUrl,
+  Cell_Type,
+  mongoUrl = "",
   file_path = "",
-  rerun = FALSE
+  rerun = FALSE,
+  use_db = TRUE,
+  json_collection_path = ""
 )
 }
 \arguments{
@@ -17,11 +20,17 @@ generate_htppFeature_htppCategory(
 
 \item{PlateID}{character string: The PlateID for the plate being analyzed}
 
+\item{Cell_Type}{character: The cell type associated with the specific feature and category set used for a set of HTPP plates; will be saved to collections}
+
 \item{mongoUrl}{character string: The database where the collections will be stored}
 
 \item{file_path}{character string: The path to where the input file is located}
 
 \item{rerun}{boolean:  Whether to delete and reinsert into both collections; false by default}
+
+\item{use_db}{boolean. Determines whether mongoDB will be used or not; default is TRUE}
+
+\item{json_collection_path}{character. Full file path to where JSON collections will be stored}
 }
 \description{
 Inserts feature and category data into mongo collection htpp_feature and htpp_category

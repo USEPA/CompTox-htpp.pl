@@ -5,23 +5,29 @@
 \title{Create htpp_bmc collection based on htpp_tcpl and adds global mahalanobis distances into htpp_bmc}
 \usage{
 generate_htppBmc_globalMah(
-  mongoUrl,
-  hitCall = 0,
+  mongoUrl = "",
+  hitCall = 0.9,
   bmc_max = NA,
   bmc_min = 10^0.5,
-  rerun = FALSE
+  rerun = FALSE,
+  use_db = TRUE,
+  json_collection_path = ""
 )
 }
 \arguments{
 \item{mongoUrl}{character string: URL to connect to MongoDB for HTPP dataset; can be created using the mongoURL function in htpp.pl}
 
-\item{hitCall}{numeric (between 0-1): Hitcall threshold from tcplfit2 to use for filtering good BMD values; default is 0 for no hitcall filtering}
+\item{hitCall}{numeric (between 0-1): Hitcall threshold from tcplfit2 to use for filtering good BMD values; default is 0.9}
 
 \item{bmc_max}{numeric: The maximum bmc value if bmd > highest tested conc; default is NA}
 
 \item{bmc_min}{Defines the denominator for calculating the minimum bmc value for cases where the bmc is less that the lowest tested conc (i.e., minimum tested conc/bmc_min); default is 10^0.5}
 
 \item{rerun}{rerun = TRUE will drop existing entries in htpp_bmc for approach = "global" and endpoint = "global", and reinsert; FALSE by default}
+
+\item{use_db}{boolean: Determines whether mongoDB will be used or not; default is TRUE}
+
+\item{json_collection_path}{character: Full file path to where JSON collections will be stored}
 }
 \description{
 Create htpp_bmc collection based on htpp_tcpl and adds global mahalanobis distances into htpp_bmc

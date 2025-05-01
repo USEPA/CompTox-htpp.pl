@@ -4,7 +4,14 @@
 \alias{curveFit_htppFeature}
 \title{Feature-level curve fitting, adds feature-level fit data to htpp_tcpl collection}
 \usage{
-curveFit_htppFeature(minObjects, mongoUrl, rerun = FALSE, nThreads = 1)
+curveFit_htppFeature(
+  minObjects,
+  mongoUrl = "",
+  rerun = FALSE,
+  nThreads = 1,
+  use_db = T,
+  json_collection_path = ""
+)
 }
 \arguments{
 \item{minObjects}{numeric: The minimum number of objects used to filter the dataset for analysis}
@@ -16,6 +23,10 @@ curveFit_htppFeature(minObjects, mongoUrl, rerun = FALSE, nThreads = 1)
 \item{nThreads}{\itemize{
 \item numeric: the number of threads to use for processing; default is 1
 }}
+
+\item{use_db}{boolean: Determines whether mongoDB will be used or not; default is TRUE}
+
+\item{json_collection_path}{character: Full file path to where JSON collections will be stored}
 }
 \description{
 Feature-level curve fitting, adds feature-level fit data to htpp_tcpl collection

@@ -4,7 +4,13 @@
 \alias{curveFit_htppGlobalMah}
 \title{Global Mahalanobis curve fitting, adds global Mahalanobis fit data to htpp_tcpl collection}
 \usage{
-curveFit_htppGlobalMah(minObjects, mongoUrl, rerun = FALSE)
+curveFit_htppGlobalMah(
+  minObjects,
+  mongoUrl = "",
+  rerun = FALSE,
+  use_db = TRUE,
+  json_collection_path = ""
+)
 }
 \arguments{
 \item{minObjects}{numeric: The minimum number of objects used to filter the dataset for analysis}
@@ -12,6 +18,10 @@ curveFit_htppGlobalMah(minObjects, mongoUrl, rerun = FALSE)
 \item{mongoUrl}{character string: URL to connect to MongoDB for HTPP dataset; can be created using the mongoURL function in htpp.pl}
 
 \item{rerun}{boolean: rerun = TRUE will drop existing htpp_tcpl collection for global mah values (htpp_tcpl$remove(query=mongoQuery(approach="global", endpoint="global")) and reinsert; FALSE by default}
+
+\item{use_db}{boolean: Determines whether mongoDB will be used or not; default is TRUE}
+
+\item{json_collection_path}{character: Full file path to where JSON collections will be stored}
 }
 \description{
 Global Mahalanobis curve fitting, adds global Mahalanobis fit data to htpp_tcpl collection

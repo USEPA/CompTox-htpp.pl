@@ -10,9 +10,11 @@ generate_htppNullChems(
   rel_cellCount = 50,
   plot_file_path,
   study_name,
-  mongoUrl,
+  mongoUrl = "",
   ConcList = c(100, 10, 1, 0.1, 0.01, 0.001, 1e-04, 1e-05),
-  rerun = FALSE
+  rerun = FALSE,
+  use_db = TRUE,
+  json_collection_path = ""
 )
 }
 \arguments{
@@ -31,6 +33,10 @@ generate_htppNullChems(
 \item{ConcList}{numeric vector: vector of 8 test concentrations to be used for the NULL chemicals. c(100, 10, 1, 0.1, 0.01, 0.001, 0.0001, 0.00001) by default.}
 
 \item{rerun}{boolean: rerun = TRUE will drop existing cv_well collection and reinsert; FALSE by default}
+
+\item{use_db}{boolean: Determines whether mongoDB will be used or not; default is TRUE}
+
+\item{json_collection_path}{character: Full file path to where JSON collections will be stored}
 }
 \description{
 Create plots for signal strength and add NULL chemicals to htpp_well_norm

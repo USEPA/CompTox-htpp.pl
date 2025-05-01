@@ -4,7 +4,13 @@
 \alias{generate_htppPac_catMah}
 \title{add category mahalanobis records to htpp_pac}
 \usage{
-generate_htppPac_catMah(mongoUrl, hit_n_conc = 4, rerun = FALSE)
+generate_htppPac_catMah(
+  mongoUrl = "",
+  hit_n_conc = 4,
+  rerun = FALSE,
+  use_db = T,
+  json_collection_path = ""
+)
 }
 \arguments{
 \item{mongoUrl}{character string: URL to connect to MongoDB for HTPP dataset; can be created using the mongoURL function in htpp.pl}
@@ -12,6 +18,10 @@ generate_htppPac_catMah(mongoUrl, hit_n_conc = 4, rerun = FALSE)
 \item{hit_n_conc}{numeric: Number of test concentrations needed during curve fitting to determine if a PAC is a hit; default is 4}
 
 \item{rerun}{boolean: rerun = TRUE will drop existing entries in htpp_bmc for approach = "category", and reinsert; FALSE by default}
+
+\item{use_db}{boolean: Determines whether mongoDB will be used or not; default is TRUE}
+
+\item{json_collection_path}{character: Full file path to where JSON collections will be stored}
 }
 \description{
 add category mahalanobis records to htpp_pac

@@ -7,10 +7,12 @@
 generate_htppCatMah(
   coverVariance,
   minObjects,
-  mongoUrl,
+  mongoUrl = "",
   varianceExplainedPath,
   nThreads = 1,
-  rerun = FALSE
+  rerun = FALSE,
+  use_db = TRUE,
+  json_collection_path = ""
 )
 }
 \arguments{
@@ -25,6 +27,10 @@ generate_htppCatMah(
 \item{nThreads}{numeric:  the number of threads to use for processing; default is 1}
 
 \item{rerun}{boolean: rerun = TRUE will drop existing htpp_cat_mah collection and reinsert; have FALSE by default}
+
+\item{use_db}{boolean: Determines whether mongoDB will be used or not; default is TRUE}
+
+\item{json_collection_path}{character: Full file path to where JSON collections will be stored}
 }
 \description{
 Create htpp collection htpp_cat_mah for category Mahalanobis distances

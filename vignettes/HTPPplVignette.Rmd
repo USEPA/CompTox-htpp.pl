@@ -9,27 +9,58 @@ vignette: >
   %\VignetteEncoding{UTF-8}
 ---
 
-```{r setup, include = FALSE}
-knitr::opts_chunk$set(
-  collapse = TRUE,
-  comment = "#>"
-)
+# Introduction
+
+The goal of this vignette is to walk through a typical pipelining of high-throughput phenotypic profiling (HTPP) data using the *htpp.pl* R package. The underlying source code and methodology of *htpp.pl* was established based on the methods outlined in Nyffeler et al., 2021 (https://www.ncbi.nlm.nih.gov/pmc/articles/PMC8673120/) at the US EPA Center for Computational Toxicology and Exposure.
+
+The *htpp.pl* package is designed to perform a complete analysis of HTPP chemical screening experiments. This includes experimental metadata organization, loading and processing Harmony raw cell-level data (*Level 0*), perform well-level normalization (*Level 4*), and z-scale normalize data (*Level 5*), perform several methods for data aggregation, and finally identifying chemical bioactivity using the *tcplfit2* concentration-response modeling R package. 
+
+The *htpp.pl* package saves all data across multiple steps of the pipeline using MongoDB as the database backend. The overall schema of *htpp.pl* is shown in Figure 1.
+
+![Figure 1. MongoDB schema of htpp.pl](Images/htpp.pl_schema.png){width=85%}
+
+### Notes:
+
+* The *htpp.pl* R package provides functions for  processing HTPP data. The manual explaining all of the functions can be found in the *htpp.pl* manual PDF: **~/htpp.pl/htpp.pl_0.3.pdf**
+* Many functions in *htpp.pl* that insert data into MongoDB collections will have a 'rerun' or 'replace' parameter that impacts whether existing collections or data within collections are dropped and re-inserted. Please reference function documentation for details.
+
+
+## Installation
+
+The *htpp.pl* R package is available on the US EPA Github (https://github.com/USEPA/CompTox-htpp.pl). To install the R package, a user can clone the current public release and run devtools::install_local(), or use devtools:install_github(). 
+
+```{r installation, eval=FALSE}
+install.packages("devtools")
+library(devtools)
+
+#if Github repo was cloned
+devtools::install_local(path = "path/to/CompTox-htpp.pl/") #if user cloned repo from Github
+
+#install direct from Github
+devtools::install_github("USEPA/CompTox-htpp.pl")
+
 ```
 
 
-## R Packages
+# The *htpp.pl* R Package
+
+
+## R Packages Used by htpp.pl
 
 ```{r}
 # Primary Packages #
 library(tcplfit2)
+library(htpp.pl)
 library(devtools) #for loading the htpp.pl package
+# Timing Packages #
+library(tictoc)
 # Database Connection Packages #
 library(mongolite)
 library(jsonlite)
 # Data Formatting Packages #
 library(data.table)
-library(dplyr)
 library(plyr)
+library(dplyr)
 library(readr)
 library(rlist)
 library(stringr)
@@ -43,47 +74,18 @@ library(tibble)
 library(doParallel)
 library(foreach)
 library(parallel)
-# Timing Packages #
-library(tictoc)
+
 ```
-
-```{r, echo=FALSE, warning=FALSE}
-devtools::load_all()
-```
-
-
-# Introduction
-
-The goal of this vignette is to walk through a typical pipelining of high-throughput phenotypic profiling (HTPP) data using the *htpp.pl* proto-R package. The underlying source code and methodology of *htpp.pl* was established based on the methods outlined in Nyffeler et al., 2021 (https://www.ncbi.nlm.nih.gov/pmc/articles/PMC8673120/) at the US EPA Center for Computational Toxicology and Exposure.
-
-The *htpp.pl* package is designed to perform a complete analysis of HTPP chemical screening experiments. This includes experimental metadata organization, loading and processing Harmony raw data files, data normalization, several varieties of data aggregation, and identification of active and inactive chemicals via concentration-response modeling leveraging the *tcplfit2* R package. 
-
-The *htpp.pl* package saves all data across multiple steps of the pipeline using MongoDB as the database backend. The overall schema of *htpp.pl* is shown in Figure 1.
-
-![Figure 1. MongoDB schema of htpp.pl](Images/htpp.pl_schema.png){width=85%}
-
-**Notes:**
-* Future versions of *htpp.pl* will offer DB-free options to output all MongoDB collections as JSON objects so MongoDB is not a requirement.
-* The *htpp.pl* R package provides forty-seven functions for processing data. The manual explaining all of the functions can be found in the *htpp.pl* manual PDF: **~/htpp.pl/htpp.pl_0.2.pdf**
-* Many functions in *htpp.pl* that insert data into MongoDB collections will have a 'rerun' or 'replace' parameter that impacts whether existing collections or data within collections are dropped and re-inserted. Please reference function documentation for details.
-
-
-# The *htpp.pl* Package
 
 
 ## Required Input Files
 
+
 #### KeyFile.R
 
-The 'KeyFile.R' is simply an R script that houses MongoDB credential information which is used by helper functions and mongolite functions in querying MongoDB data. An example 'KeyFile.R' file is as follows:
+The 'KeyFile.R' is an R script that houses MongoDB credential information which is used by helper functions and mongolite functions in querying MongoDB data. An example 'KeyFile.R' file is included with this R package for reference.
 
-```{r, KeyFile.R}
-
-host <- "mongoDB_host" #e.g., mongodb.epa.gov
-user <- "TheScientist" #MongoDB user ID
-passwd <- "mysecretpassword" #MongoDB user password
-
-```
+Users should create this `KeyFile.R` within their home or project directory and then source it to load the MongoDB credentials into their environment.
 
 #### Sample Key
 
@@ -105,14 +107,56 @@ Required columns for an HTPP sample key (with specific examples of metadata colu
 #required columns
 colnames(sample_key)
 
+#replicate_num -- numerical value associated with the culture replicate. There are typically 3-4 culture replicates in each HTPP experiment.
+unique(sample_key$replicate_num)
+
+#cell_type -- a symbol used to denote which cell type a sample originated
+unique(sample_key$cell_type)
+
+#culture_id -- an identifier for the culture replicate associated with an assay plate. Typically begins with a lowercase “c” followed by a YYYY-MM-DD notation
+unique(sample_key$culture_id)
+
 #pg_id -- plate group ID where a plate group represents a set of HTPP biological replicate plates
 table(sample_key$pg_id, sample_key$plate_id) #note that there's 4 HTPP plates in plate group 1
+
+#doseplate_id -- an identifier for the dose plate that was used to dispense a treatment -- typically, a barcode
+unique(sample_key$doseplate_id)
 
 #stype -- HTPP sample type, note that 'test sample' refers to test chemical/s 
 table(sample_key$stype)
 
+#chem_id-- chemical identifier
+sample_key$chem_id[1]
+
+#dtxsid -- DSSTox substance identifier (DTXSID)
+sample_key$dtxsid[1]
+
+#casrn -- CAS number of chemical
+sample_key$casrn[1]
+
+#chem_name -- typically the preferred name of the chemical tested as listed on the CompTox Chemicals Dashboard (https://comptox.epa.gov/dashboard/)
+sample_key$chem_name[1]
+
+#dose_level -- numerical index corresponding to ascending dose levels within a study
+unique(sample_key$dose_level)
+
+#conc -- the chemical test concentration
+sample_key$conc[1]
+
+#conc_unit -- units associated with the chemical test concentration
+sample_key$casrn[1]
+
+#casrn -- CAS number of chemical
+unique(sample_key$conc_unit)
+
 #sample_id -- Should be a concatenation of plate_id and well_id, this should also match to the raw Harmony HTPP file in some way (described later)
 sample_key$sample_id[1:5]
+
+#plate_id -- identifier for the assay plate -- typically a barcode
+sample_key$plate_id[1]
+
+#well_id -- well identifier associated with the position of the sample on the assay plate
+sample_key$well_id[1]
 
 #trt_name -- specific treatment name of sample, usually a concatenation of pg_id, chem_id, and dose_level 
 sample_key$trt_name[c(1, 50, 500)]
@@ -123,11 +167,15 @@ unique(sample_key$assay)
 #qc_flag -- QC flag determined from laboratory for each sample. Should be one of: "OK", "CELL_VIABILITY", "DOSEPLATE_FAIL" or "DISPENSE_FAIL"
 unique(sample_key$qc_flag)
 
+#qc_flag_description -- column describing the nature of the problem that resulted in a low quality well flag (e.g. DISPENSE_FAIL, NA)
+unique(sample_key$qc_flag_description)
+
 ```
+
 
 #### Raw Harmony Files
 
-Raw Harmony files should be stored in a hierarchical way. An example of the file structure for a HTPP experiment with two 384-well plates, Plate_1 and Plate_2, and a CV experiment with one 384-well plate, CV_plate_1, is as follows (bold denotes raw Harmony file): 
+Raw Harmony files should be stored in a hierarchical way. An example of the file structure for a HTPP experiment with two 384-well plates, Plate_1 and Plate_2, and a cell viability (CV) experiment with one 384-well plate, CV_plate_1, is as follows (bold denotes raw Harmony file). Note that this is the default folder structure created by Harmony software.  
 
 * file_path_to_data/
     + HTPP_experiment/
@@ -156,7 +204,6 @@ Raw Harmony files should be stored in a hierarchical way. An example of the file
 
 **The vignette will be broken into sections that cover a typical HTPP pipelining run:**
 
-* Loading the htpp.pl proto-package
 * *mongolite* helper functions
 * Sample Key validation
 * Metadata processing
@@ -169,21 +216,6 @@ Raw Harmony files should be stored in a hierarchical way. An example of the file
 * Benchmark Concentration (BMC) and Phenotypic Altering Concentration (PAC) determination
 * HTPP feature-level curve fitting
 
-### Loading the htpp.pl package
-
-The *htpp.pl* package should first be cloned from GitHub (*TBD*) into the user's compute environment.
-
-From within the 'htpp.pl.Rproj' R project the package can be loaded using the devtools package
-
-```{r, package loading, eval=FALSE, echo=TRUE}
-
-getwd() #should be the htpp.pl source directory
-
-devtools::document() #builds documentation
-devtools::build_manual(path = "./") #build package manual
-devtools::load_all() #loads all htpp.pl functions similar to library(htpp.pl)
-
-```
 
 ### *mongolite* Helper Functions
 
@@ -210,7 +242,7 @@ url
 
 #### Examples Using *mongolite* Functions
 
-It is common to use the *mongolite* package to connect to and check on MongoDB collections when running the *htpp.pl* package. There are many reasons to do so including loading data from a MongoDB collection to generate QC plots, or to check that a MongoDB collection has the correct number of documents you expected.
+It is common to use the *mongolite* package to connect to and check on MongoDB collections when running the *htpp.pl* package. There are many reasons to do so including loading data from a MongoDB collection to generate QC plots, or to check that a MongoDB collection has the correct number of documents.
 
 Here is an example on how to use *mongolite* functions to connect to the htpp_well_trt MongoDB collection, count the number of documents in the collection, and pull the data into a data.frame: 
 
@@ -222,7 +254,7 @@ htpp_well_trt <- mongo(collection = "htpp_well_trt",
                        verbose = getOption("verbose"))
 
 #count total documents in htpp_well_trt
-htpp_well_trt$counts()
+htpp_well_trt$count()
 
 #pull all data from htpp_well_trt into a data.frame
 dat <- htpp_well_trt$find()
@@ -236,46 +268,61 @@ dat <- htpp_well_trt$find()
 
 ```
 
+### DB-free Option
+
+Most of the functions in *htpp.pl* now have a DB-free option. This allows the user to store the files locally, rather than requiring MongoDB. The DB-free option is recommended for users with **small** HTPP experiments. The `use_db` function parameter controls whether a function will insert its results to MongoDB, or save locally to JSON files; this parameter set to TRUE by default. If a user does not want to use MongoDB, `use_db` should be set to FALSE and an an additional function parameter, `json_directory_path`, should be specified to direct the function to store and read resulting JSON files. See function documentation for more details.
+
+```{r, DB-free analysis, eval=FALSE, echo=TRUE}
+
+generate_htppWellTrt_htppChem(SampleKey=validated_sample_key, use_db=FALSE, json_collection_path="path/to/local/storage/")
+
+```
+
+The following *htpp.pl* functions with DB-free options are: 
+
+* Raw2Level4
+* Level5
+* CVanalysis
+* globalMahalanobisDistances
+* categoryMahalanobisDistances
+* nullProbs_catMah
+* curveFit_htppGlobalMah
+* curveFit_htppCatMah
+* curveFit_htppFeature
+* generate_htppFeature_htppCategory
+* generate_htppWell
+* generate_htppWellNorm
+* generate_htppNullChems
+* generate_htppProfile
+* generate_htppGlobalMah
+* generate_htppCatMah
+* generate_htppBmc_globalMah
+* generate_cvWell
+* generate_cvBMC
+* generate_cvTcpl
+* generate_htppBmc_catMah
+* generate_htppBmc_feature
+* generate_htppPac_globalMah
+* generate_htppPac_catMah
+* generate_htppPac_catMah
+* generate_htppStudy
+* cellViability_plots
+* viability_controlPlot_htppWell
+* viability_controlPlot_htppWellNorm
+* curvePlots_htppGlobalMah
+* curvePlots_htppCatMah
+* curvePlots_htppFeature
+* pseudoBmcPlots_htppCatMah
+* pacPlots_htppGlobalMah
+* pacPlots_htppCatMah
+
 ### Sample Key Validation
 
 Validating the sample key is one of the most important steps of running the *htpp.pl* pipeline as this file relates all samples and experimental metadata to raw Harmony HTPP files.
 
-The **validate_htpp_sampleKey** function runs a series of tests to ensure the sample key conforms to the MongoDB schema, reformats data when necessary for further pipelining (such as converting "NA" strings to the proper NA R format), and will return warnings for any failed tests for the user to correct. Users will likely need to run the validation function multiple times to correct any issues. The function will return a data.frame object when the sample key passes validation.
+The **validate_htpp_sampleKey** function runs a series of tests to ensure the sample key conforms to the MongoDB schema, reformats data when necessary for further pipelining (such as converting "NA" strings to the proper NA R format), and will return warnings for any failed tests for the user to correct. Users will likely need to run the validation function multiple times to correct any issues. The function will return a data.frame object when the sample key passes validation or will return a list of validation tests that fail.
 
-The **validate_htpp_sampleKey** function performs the following checks:
-
-* **CIT_0 –** Checks if the key is missing any of the required "replicate_num", "cell_type", "culture_id", "pg_id", "doseplate_id", "stype", "chem_id", "dtxsid", "casrn", "chem_name", "dose_level", "conc", "conc_unit", "sample_id", "plate_id", "well_id", "trt_name", "assay", "qc_flag", "qc_flag_description" fields.
-* **UCT_0 –** Checks if the key contains unknown fields.
-* **NAS_0 –** Checks if there are NA sample IDs.
-* **DST_0 –** Checks for duplicate sample IDs.
-* **SIF_0 –** Checks that sample IDs all follow the correct labeling pattern.
-* **SPR_0 –** Checks that the sample IDs all correspond to a well_id and a plate_id.
-* **NAP_0 –** Checks if there are NA plate IDs.
-* **PIF_0 –** Checks that plate IDs all follow the correct labeling pattern.
-* **WIF_0 –** Checks that well IDs all follow the corret labeling pattern.
-* **WPC_0 -** Checks if there are more plate IDs than well IDs, which would indicate a recording error as there should be more wells than plates.
-* **NAT_0 -** Checks if any treatment names are NA.
-* **TRR_0 -** Checks that there are a fixed number of replicates for each treatment.
-* **TRS_0 -** Checks that all treatments are being analyzed for either cell viability or phenotypic profiling.
-* **TRP_0 -** Checks that there is no more than one replicate for each test chemical on each plate.
-* **QCN_0 -** Checks if there are NA qc flags.
-* **QCV_0 -** Checks that qc flags all correspond to standard flags (OK, CELL_VIABILITY, DOSEPLATE_FAIL, DISPENSE_FAIL or SINGLE_REP)
-* **NAS_1 -** Checks if there are NA stypes (experiment types).
-* **STV_0 -** Checks if the stypes all correspond to the standard labels (test sample, viability positive control, vehicle control or reference chemical)
-* **NAR_0 -** Checks if there are NAs in rna_src.
-* **CON_0 -** Checks that all concentrations are in numbers.
-* **COC_0 -** Checks that NA concentration units correspond to NA concentrations and vice versa.
-* **DMC_0 -** Checks that NA dose levels correspond to NA concentrations and vice versa.
-* **DLI_0 -** Checks that all dose levels are integers.
-* **DL0_0 -** Checks that dose levels are above 0 for non-control chemicals.
-* **DCC_0 -** Checks that dose levels for non-control chemicals scale with concentrations and increase monotonically.  
-* **CPC_0 -** Checks that replicate numbers are unique within each treatment.
-* **PIC_0 -** Checks that all plate group IDs are characters.  
-* **NAP_1 -** Checks if there are NA plate group IDs.
-* **PGC_0 -** Checks that plates are balanced within each plate group.
-* **NAR_0 -** Checks if there are NA replicate numbers.
-
-**Note:** These checks can be turned on and off with the 'skipped_tests' parameter in the **validate_htpp_sampleKey** function.
+**Note:** Each of these checks can be turned off with the 'skipped_tests' parameter in the **validate_htpp_sampleKey** function. This is usually done when HTPP studies do not follow a standard design, or there are other factors that can justify skipping a validation test.
 
 An example of sample key validation using *htpp.pl* is shown here:
 
@@ -309,7 +356,9 @@ head(validated_sample_key, n = 2)
 
 ```
 
+
 ### Metadata Processing
+
 
 #### Create htpp_well_trt and htpp_chem MongoDB collections
 
@@ -334,13 +383,14 @@ Built in quality checks:
 
 #### Create htpp_feature and htpp_category MongoDB collections
 
-The **generate_htppFeature_htppCategory** function will read in an example Harmony raw data file, define the HTPP feature and category metadata, and store the results in the htpp_feature and htpp_category MongoDB collections.
+The **generate_htppFeature_htppCategory** function will read in an example Harmony raw data file, define the HTPP feature and category metadata, and store the results in the htpp_feature and htpp_category MongoDB collections. In v0.4+ of *htpp.pl*, cell type is a tracked field within these collections allowing for an HTPP study to contain multiple cell types with different HTPP feature sets. 
 
 ```{r, eval=FALSE}
 
 #using an example raw HTPP harmony file following the file structure defined above
 generate_htppFeature_htppCategory(inputPath = "/full/path/to/HTPP_experiment/Plate_1/Evaluation\ 1/Objects_Population\ -\ Cells\ Non-Border.txt",
                                   PlateID = "Plate_1",
+                                  Cell_Type = "TeloHAEC",
                                   mongoUrl = url)
 
 ```
@@ -355,13 +405,14 @@ Built in quality checks:
 
 After the initial metadata MongoDB collections have been created, processing of the raw Harmony HTPP data can begin.
 
+
 #### Read in Raw Data and Process to Level 4: Create htpp_well_raw, htpp_image_metadata, and htpp_well
 
 The **generate_htppWell** function is a wrapper function for the **Raw2Level4** function which does the primary processing of raw HTPP data and inputs the data into the htpp_well_raw, htpp_image_metadata, and htpp_well MongoDB collections.
 
 The **Raw2Level4** function performs the following *for each raw Harmony HTPP plate*:
 
-* The raw file is read in and some new columns are created. Cells are flagged if they fall without a pre-set size range (specific for each cell type).
+* The raw file is read in and some new columns are created. Cells are flagged if they fall without a pre-set size range (specific for each cell type; default values shown below).
 * Column names are modified to match the MongoDB schema, according to the ‘translation’ table in htpp_feature.
 * Calculate the median for each well and write it to the htpp_well_raw MongoDB collection.
 * MAD normalization is performed using DMSO controls on each HTPP plate and data are inserted into htpp_well collection
@@ -386,6 +437,7 @@ Built in quality checks:
 * Function will give a warning if the number of records in httr_wel does not match the number of documents in htpp_well_trt with qc_flag == "OK".
 * Function will give a warning if the number of rows in a given raw Harmony HTPP file exceeds the value of the 'n_max' parameter (which is meant to help with memory)
 
+
 #### QC Checks
 
 There are several QC checks to consider after this step in *htpp.pl* including: Investigate the variance of cell number of the vehicle control across plates and the response to the cell viability positive control chemical. This is (1) to ensure the plates were dosed and imaged in the right orientation relative to the sample key; and (2) the assay worked. In this step, only the cell count information is considered.
@@ -403,7 +455,7 @@ For the latter QC check, *htpp.pl* includes a plotting function (**viability_con
 
 ```{r, eval=FALSE}
 
-viability_controlPlot_htppWell(file_path = "path/to/plot/destination/",
+viability_controlPlot_htppWell(file_path = "figure/output/path/",
                                vehicle_control = "DMSO",
                                viability_positive_control = "STAURO",
                                study_name = "example_study",
@@ -411,13 +463,15 @@ viability_controlPlot_htppWell(file_path = "path/to/plot/destination/",
 
 ```
 
+
 ### Data Normalization
 
 Data normalization is performed on the raw data in preparation for Mahalanobis distance estimation and *tcplfit2* concentration response modeling.
 
+
 #### Run Level 5 analysis: Create htpp_well_norm, htpp_profile
 
-The **generate_htppWellNorm** wrapper function is used to call the **Level5** functions which normalizes the data in the htpp_well MongoDB collection and inputs the normalized data into the htpp_well_norm MongoDB collection. Additionally, the **generate_htppProfile** function generates summary statistics for each cell type in each plate group, based on htpp_well_trt and htpp_well_norm MongoDB collections, and stores the results into the htpp_profile MongoDB collection.
+The **generate_htppWellNorm** wrapper function is used to call the **Level5** functions which normalizes the data in the htpp_well MongoDB collection and inputs the normalized data into the htpp_well_norm MongoDB collection. Additionally, the **generate_htppProfile** function generates a median HTPP feature profile across treatments for each cell type in each plate group, based on htpp_well_trt and htpp_well_norm MongoDB collections, and stores the results into the htpp_profile MongoDB collection. This collection is primarily used for data visualization such as heatmaps of the median HTPP feature activity across treatments in a study.
 
 The **Level5** function performs the following:
 
@@ -434,8 +488,7 @@ An example of Level5 normalization is shown here:
 generate_htppWellNorm(mongoUrl = url)
 
 #summary stats and make htpp_profile (keep data with cell counts > 50 and viability > 50%)
-generate_htppProfile(n_cells = 50,
-                     relative_cellCount = 50,
+generate_htppProfile(minObject = 50,
                      mongoUrl = url)
 
 ```
@@ -452,7 +505,7 @@ Similar to the positive control cell viability plot for htpp_well data (Level 4)
 
 ```{r, eval=FALSE}
 
-viability_controlPlot_htppWellNorm(file_path = "path/to/plot/destination/",
+viability_controlPlot_htppWellNorm(file_path = "figure/output/path/",
                                    vehicle_control = "DMSO",
                                    viability_positive_control = "STAURO",
                                    study_name = "example_study",
@@ -466,10 +519,11 @@ viability_controlPlot_htppWellNorm(file_path = "path/to/plot/destination/",
 To account for possible effect of chemical exposure on cell viability in HTPP experiments, *htpp.pl* employs two approaches:
 
 1. Experiments consisting of both HTPP cell painting test plates (denoted as "HTPP" in the 'assay' field on the sample key file) and Cell Viability (CV) test plates (denoted as "CV" in the 'assay' field on the sample key file.
-    + In this case, data from both "HTPP" and "CP" plates are read into the MongoDB and processed individually.
+    + In this case, data from both "HTPP" and "CV" plates are read into the MongoDB and processed individually.
     + Potency information, determined from *tcplfit2* concentration-response modeling of the "CV" plates will be used to filter cytotoxic concentrations of chemical before downstream concentration-response modeling of "HTPP" data occurs.
 2. Experiments only consist of only "HTPP" test plates (**most common**)
     + In this case, potency information determined from *tcplfit2* concentration-response modeling will be **empirically derived** using the relative cell count information from "HTPP" plates (htpp_well) to identify and filter cytotoxic/cytostatic concentrations of chemicals before downstream concentration-response modeling of "HTPP" data occurs.
+
 
 #### Case 1: Deriving Viability from Cell Viability (CV) Plates
 
@@ -504,7 +558,7 @@ Concentration-response modeling is performed on the CV data using the **generate
 
 * PI response curve fits (CV data):
     - Identify baseline levels using vehicle controls, calculate Median and nMad
-    - For each chemical, run the tcplfit2 fit function
+    - For each chemical, run the *tcplfit2* **concRespCore** function
         + Typical parameters are:
             * cutoff = 5 * nMad of solvent controls
             * onesd = nMad / 1.349 * 3 (to calculate the BMC for a BMR of 3 nMad)
@@ -518,6 +572,7 @@ An example of running *tcplfit2* concentration-response modeling on CV data is s
 
 ```{r, eval=FALSE}
 
+#setting the 'cell_viability' to TRUE will pull relative cell count data from cv_well
 generate_cvTcpl(cell_viability = TRUE,
                 mongoUrl = url)
 
@@ -527,15 +582,16 @@ Built in quality checks:
 
 * Function will give a warning if the number of records in cv_tcpl do not match the number of documents in htpp_chem.
 
-#### Case 2: Empirically Derived Viability Determination
 
-If instead, the HTPP experiment did not include any CV plates, cell viability is **empirically derived** from the relative cell count data from the htpp_well MongoDB collection. Since the relative cell count (rel_cell_count) data have already been calculated as part of creating htpp_well, concentration-response modeling is the only step needed to estimate cell viability using the **generate_cvTcpl** wrapper function.
+#### Case 2: Cell Viability Determination from Relative Cell Count Data
+
+If the HTPP experiment did not include any CV plates, cell viability is derived from the **relative cell count** data from the htpp_well MongoDB collection. Since the relative cell count (rel_cell_count) data have already been calculated as part of creating htpp_well, concentration-response modeling is the only step needed to estimate cell viability using the **generate_cvTcpl** wrapper function.
 
 Similar to *Case 1* described above, the **generate_cvTcpl** function does the following for relative cell count data:
 
 * Relative cell count curve fits:
     - Identify baseline levels using vehicle controls, calculate Median and nMad
-    - For each chemical, run the tcplfit2 fit function
+    - For each chemical, run the *tcplfit2* **concRespCore** function
         + Typical parameters are:
             * cutoff = 2 * nMad of solvent controls
             * onesd = 50 / 1.349 (to calculate the BMC for a BMR of 50%)
@@ -553,7 +609,6 @@ generate_cvTcpl(cell_viability = FALSE,
 
 ```
 
-**Note:** The above parameters are hard-coded for CV data. Future updates to the code will add these as parameters.
 
 #### QC Checks
 
@@ -569,11 +624,11 @@ An example of plotting the HTPP cell viability concentration-response curves and
 ```{r, cell viability plots, eval=FALSE}
 
 #to plot all chemicals
-cellViability_plots(file_path = "path/to/figure/",
+cellViability_plots(file_path = "figure/output/path",
                     study_name = "example_study", mongoUrl = url, refChems = FALSE)
 
 #to only plot reference chemicals
-cellViability_plots(file_path = "path/to/figure/",
+cellViability_plots(file_path = "figure/output/path",
                     study_name = "example_study", mongoUrl = url, refChems = TRUE)
 
 ```
@@ -581,7 +636,7 @@ cellViability_plots(file_path = "path/to/figure/",
 ![Figure 2. Concentration-response plot of an example cell viability active test chemical](Images/TeloHAEC_EPAPLT0616G01_cvPlot.png){width=85%}
 
 
-*htpp.pl* also provides a generic plotting function, **concRespPlot_JN**, for *tcplfit2* curve fits. This plotting function is not limited to only cell viability curve fits but could be adapted for most HTPP *tcplfit2* concentration-response modeling results (e.g., from the htpp_tcpl MongoDB collection), but an example is shown here for relative cell count data:
+*htpp.pl* also provides a generic plotting function, **concRespPlot_JN**, for *tcplfit2* curve fits. This plotting function is not limited to only cell viability curve fits but could be adapted for most HTPP *tcplfit2* concentration-response modeling results (e.g., from the htpp_tcpl MongoDB collection). An example is shown here for relative cell count data:
 
 ```{r, generic curve plots, eval=FALSE}
 
@@ -610,6 +665,7 @@ for(iRow in 1:dim(CC)[1]){
 
 ```
 
+
 #### CV Benchmark Concentration (BMC) and No Observed Effect Concentration (NOEC) Determination
 
 Using the cell viability curve fit results, either CV or relative cell counts, information of the tested concentrations and the previously calculated BMC can be combined to define the no observed effect concentration (NOEC) and the lowest observed effect concentration (LOEC).
@@ -624,7 +680,7 @@ An example of this function is shown here:
 
 ```{r, eval=FALSE}
 
-generate_cvBMC(mongoUrl = url)
+generate_cvBMC(mongoUrl = url, cell_viability = FALSE)
 
 ```
 
@@ -635,31 +691,32 @@ Built in quality checks:
 
 ### Null Chemical Generation
 
-In many cases, it is useful to generate null chemicals before concentration-response modeling which can provide an estimate of how reliable the concentration-response modeling works, and information regarding the false-positive rate inherent in an HTPP experiment.
+In many cases, it is useful to generate null chemicals before concentration-response modeling which can provide an estimate of the false-positive rate expected when applying this concentration-response modeling method to a specific HTPP experiment.
 
-There is not a unique way of how to generate a null data set, and it will depend on the design of the HTPP experiment and the size of the “real data”. For example, in one study in U2 OS cells, the two lowest concentrations of test chemicals were used to model null chemicals. For other chemical screens, the three lowest concentrations were used and resampling was done 4 times to generate enough (> 100) null chemicals.
+Generation of null data sets with *htpp.pl* is flexible, as design of null data may be constrained by the design and size of the experiment. The methods for null chemical generation implemented in *htpp.pl*, performed by the **generate_htppNullChems** function, follows a generic and standardized approach:
 
-*However*, the methods for null chemical generation in *htpp.pl*, performed by the **generate_htppNullChems** function, follows a more generic and standardized approach:
-
-* Identify suitable test chemicals for Null modeling: Only include test chemicals that have at least 6 non-cytotoxic concentrations ('n_cv_active_conc' parameter) from the cv_bmc MongoDB collection
+* Identify suitable test chemicals for Null modeling: Only include test chemicals that have at least 6 non-cytotoxic concentrations ('n_cv_active_dose_level' parameter) from the cv_bmc MongoDB collection
 * For these test chemicals, retrieve Level 5 data (htpp_well_norm) from the 2 lowest concentrations ('n_lowest_conc' parameter), and exclude wells with relative cell count < 50% ('rel_cellCount' parameter).
 * Use the Euclidean norm of the remaining Level 5 HTPP data (taken from the htpp_well_norm collection) to estimate HTPP signal strength for the test chemicals. Then use Tukey's outer fence (3*IQR) to filter out wells with abnormally high signal strength which could impact Null modeling.
     - The  **generate_htppNullChems** function will output a boxplot of the HTPP signal strength scores, with dashed lines denoting the Tukey's outer fence values, for users to review.
 * Create the Null dataset using the **dplyr::sample_n** function (without replacement).
-* Sampled Null dataset is then insterted into the htpp_well_norm MongoDB collection.
+* Sampled Null dataset is then inserted into the htpp_well_norm MongoDB collection.
 
-**Note:** To ensure the null chemicals look as closely as possible to a 'true' inactive chemical. The function uses the same dose spacing (set by the 'ConcList' parameter), the same number of doses, and the same number of biological replicates of the sampled HTPP experimental data.
+**Note:**
 
-**Note:** The number of null chemicals that can be generated depends on the number of eligible wells on each plate and across a plate group. For example, if a HTPP plate group has no cell viability issues then there should be a total of 10 Null chemicals that are generated (10 chemicals with 8 concentrations).
++ To ensure the null chemicals look as closely as possible to a 'true' inactive chemical. The function uses the same dose spacing (set by the 'ConcList' parameter), the same number of doses, and the same number of biological replicates of the sampled HTPP experimental data.
++ The number of null chemicals that can be generated depends on the number of eligible wells on each plate and across a plate group. For example, if a HTPP plate group has no cell viability issues then there should be a total of 10 Null chemicals that are generated (10 chemicals with 8 concentrations).
++ It is recommended to have > 100 total null chemicals for a given study. If needed, this step could be run multiple times (with the `rerun` parameter set to FALSE)
++ If the false-positive rate appears to be too high (later steps will look at null chemical performance), a possible solution is to adjust the thresholds throughout *htpp.pl*.
 
 An example of null chemical generation in *htpp.pl* is demonstrated here:
 
 ```{r, null chemicals, eval=FALSE}
 
 generate_htppNullChems(n_lowest_conc = 2,
-                       n_cv_active_conc = 6,
+                       n_cv_active_dose_level = 6,
                        rel_cellCount = 50,
-                       plot_file_path = "/path/to/plot/", #path where Euclidean norm boxplot is saved
+                       plot_file_path = "figure/output/path", #path where Euclidean norm boxplot is saved
                        study_name = "example_study",
                        mongoUrl = url)
 
@@ -673,9 +730,10 @@ Built in quality checks:
 
 ### Global Mahalanobis Distance Estimation and Concentration-response Modeling
 
-As reported in Nyffeler et al., 2021 (https://www.ncbi.nlm.nih.gov/pmc/articles/PMC8673120/), US EPA uses several methods for identifying HTPP-active test chemicals in multi-concentration HTPP experiments. The *htpp.pl* package has been optimized to perform analyses using Mahalanobis distance estimates for global- and category-level HTPP results as well as simple concentration-response modeling of all HTPP feature-level data.
+As reported in Nyffeler et al., 2021 (https://pubmed.ncbi.nlm.nih.gov/32862757/), there are several possible methods for identifying HTPP-active test chemicals in multi-concentration HTPP experiments. The *htpp.pl* package has been optimized to perform analyses using Mahalanobis distance estimates for global- and category-level HTPP results as well as simple concentration-response modeling of all HTPP feature-level data.
 
 In this section, we will cover the methods used by *htpp.pl* to estimate the Global Mahalanobis distances from Level 5 HTPP data (from the htpp_well_norm MongoDB collection) and subsequent concentration-response modeling using the *tcplfit2* package.
+
 
 #### Estimating the Global Mahalanobis Distance: Create htpp_global_mah MongoDB collection
 
@@ -685,7 +743,8 @@ The **generate_htppGlobalMah** is a wrapper function for the primary **globalMah
     - Data are filtered to a subset of good quality data, which is defined as wells with 'n_cells_keep' > 'minObjects' parameter and a relative cell count value > 50).
 * Principle components analysis (PCA; using the **prcomp** function with 'center' set to FALSE and 'scale.' set to FALSE) is performed to find the rotation matrix of the data.
     - The first *n* eigenfeatures that cover x% of the variance (set by the 'coverVariance' parameter) are selected from the rotation matrix.
-        + A cumulative variance explained plot of the PCA results is also created 
+        + Typically, the number of PCs that explain the default variance value of 0.95 is ~50 or greater. If the number of PCs is very low, between 2-10, this could indicate a possible data issue. In practice, low PCs are usually indicative of outlier samples having very high normalized feature data caused by some technical issue (e.g. chemical auto-fluorescence, precipitation, etc.) which should be removed from analysis. 
+        + A cumulative variance explained plot of the PCA results is also created.
     - The covariance matrix is estimated from those *n* eigenfeatures, and the inverse of the covariance matrix is calculated.
 * All data (including the “bad” wells) is transformed using the rotation matrix. Then, Mahalanobis distances are calculated for every plate:
     - The arithmetic average of all control wells is calculated.
@@ -700,7 +759,7 @@ An example of running the **generate_htppGlobalMah** function is shown here:
 
 generate_htppGlobalMah(coverVariance = 0.95,
                        minObjects = 50,
-                       plot_file_path = "/path/to/plot/", #path to the cumulative variance explained PCA plot
+                       plot_file_path = "figure/output/path", #path to the cumulative variance explained PCA plot
                        study_name = "example_study",
                        mongoUrl = url)
 
@@ -709,6 +768,7 @@ generate_htppGlobalMah(coverVariance = 0.95,
 Built in quality checks:
 
 * Function will give a warning if the number of documents in the htpp_global_mah MongoDB collection is not equal to the number of documents in the htpp_well_norm MongoDB collection.
+
 
 #### Concentration-response modeling of Global Mahalanobis Distances: Create htpp_tcpl MongoDB Collection
 
@@ -744,6 +804,7 @@ Built in quality checks:
 
 * Function will give a warning if the number of documents in the htpp_tcpl MongoDB collection for 'approach' == "global" is not equal to the number of documents in the htpp_global_mah MongoDB collection.
 
+
 #### QC Checks
 
 It is important to check on the *tcplfit2* concentration modeling results to ensure that modeling was performed correctly, and you get reasonable curve fits for reference chemicals.
@@ -758,7 +819,7 @@ The *htpp.pl* package includes a general plotting function, **curvePlots_htppGlo
 
 ```{r, global mah plots, eval=FALSE}
 
-curvePlots_htppGlobalMah(file_path = "/path/to/plot/",
+curvePlots_htppGlobalMah(file_path = "figure/output/path",
                          study_name = "example_study",
                          mongoUrl = url)
 
@@ -773,7 +834,8 @@ As described in Nyffeler et al., 2021, all 1300 standard HTPP features were assi
 
 **Note:** The overall method for estimating Category-level Mahalanobis Distances and subsequent concentration-response modeling is the same as the methods used for Global Mahalanobis Distances **except** the input data for the functions are subsets of the Level 5 HTPP data (from the htpp_well_norm MongoDB collection) that correspond to the features assigned to each of the 49 categories. 
 
-**Note:** The Category-level Mahalanobis Distances step models the data 49 times (once for each category) which may result in very long computation times for large HTPP experiments. As such, the **generate_htppCatMah** and **curveFit_htppCatMah** functions leverage the *foreach* and *doParallel* R packages to provide parallel processing capabilities for users in Linux environments. See function documentation for specifics, and note that parallel processing might not work as intended on Windows systems. It is recommended to set the 'nThreads' function parameters to 1 to run serially if running *htpp.pl* from Windows.
+**Note:** The Category-level Mahalanobis Distances step models the data 49 times (once for each category) which may result in very long computation times for large HTPP experiments. As such, the **generate_htppCatMah** and **curveFit_htppCatMah** functions leverage the *foreach* and *doParallel* R packages to provide parallel processing capabilities for users in Linux environments. See function documentation for specifics, and note that parallel processing might not work as intended on Windows systems. **It is recommended to set the 'nThreads' function parameters to 1 to run serially if running *htpp.pl* from Windows.**
+
 
 #### Estimating the Category-level Mahalanobis Distance: Create htpp_cat_mah MongoDB collection
 
@@ -808,6 +870,7 @@ Built in quality checks:
 
 * The function will give a warning if the number of documents in the htpp_cat_mah MongoDB collection does not match the number of documents in the htpp_well_norm MongoDB collection. In this case, there will be 49 times more documents in htpp_cat_mah compared to htpp_well_norm to account for the 49 categories. 
 
+
 #### Concentration-response modeling of Category-level Mahalanobis Distances: Insert results into the htpp_tcpl MongoDB Collection
 
 Having calculated the Mahalanobis distances for all 49 categories, concentration-response modeling using *tcplfit2* can proceed.
@@ -825,10 +888,10 @@ The **curveFit_htppCatMah** function performs concentration-response modeling of
     - For each chemical, subset the data based on cell viability flags as well as whether 'n_cells_keep' > 'minObjects' parameter
     - Run run the tcplfit2 fit function on the subset.
         + Typical parameters are:
-* cutoff = 1 * nMad of controls
-* onesd = nMad / 1.349  (to calculate the BMC for a BMR of 1 nMad)
-* fitmodels = c("cnst", "hill",  "poly1", "poly2", "pow", "exp2", "exp3","exp4", "exp5")
-* bidirectional = FALSE
+            * cutoff = 1 * nMad of controls
+            * onesd = nMad / 1.349  (to calculate the BMC for a BMR of 1 nMad)
+            * fitmodels = c("cnst", "hill",  "poly1", "poly2", "pow", "exp2", "exp3","exp4", "exp5")
+            * bidirectional = FALSE
     - Insert results into the htpp_tcpl MongoDB collection for 'approach' == "category"
 
 An example of using the function is as follows:
@@ -844,6 +907,7 @@ curveFit_htppCatMah(minObjects = 50,
 Built in quality checks:
 
 * Function will give a warning if the number of documents in the htpp_tcpl MongoDB collection for 'approach' == "category" is not equal to the number of documents in the htpp_cat_mah MongoDB collection.
+
 
 #### QC Checks
 
@@ -861,7 +925,7 @@ Again, it should be noted that this plotting function is still in development an
 
 ```{r, category mah plots, eval=FALSE}
 
-curvePlots_htppCatMah(file_path = "/path/to/plot/",
+curvePlots_htppCatMah(file_path = "figure/output/path",
                       study_name = "example_study",
                       mongoUrl = url)
 
@@ -874,7 +938,7 @@ As an additional analysis, *htpp.pl* provides the **curveFit_htppFeature** funct
 
 **Note:** The Feature-level concentration-response modeling step models the data 1300 times (once for each feature, for each chemical) which results in very long computation times. As such, the **curveFit_htppFeature** function leverages the *foreach* and *doParallel* R packages to provide parallel processing capabilities for users in Linux environments. See function documentation for specifics, and note that parallel processing might not work as intended in Windows systems. It is recommended to set the 'nThreads' function parameters to 1 to run serially if running *htpp.pl* from Windows.
 
-The **curveFit_htppFeature** function performs concentration-response modeling of the Global Mahalanobis Distance data as follows:
+The **curveFit_htppFeature** function performs concentration-response modeling data as follows:
 
 * Retrieve the Level 5 data from the htpp_well_norm MongoDB collection for one plate group at a time
 * **FOR EACH feature:**
@@ -905,13 +969,14 @@ Built in quality checks:
 
 * Function will give a warning if the number of documents in the htpp_tcpl MongoDB collection for 'approach' == "feature" is not equal to the number of documents in the htpp_well_norm MongoDB collection. In this case, there will be 1300 times more documents in htpp_tcpl for 'approach' == "feature" compared to htpp_well_norm to account for the 1300 features that have been fit for each chemical.
 
+
 #### QC Checks
 
 The *htpp.pl* package includes a general plotting function, **curvePlots_htppFeature**, that generates a BMC summary plot for reference chemicals across all 1300 HTPP features. Again, it should be noted that this plotting function is still in development and it is best to use the general plotting functions to fully explore the Feature-level results. An example is provided here:
 
 ```{r, feature mah plots, eval=FALSE}
 
-curvePlots_htppFeature(file_path = "/path/to/plot/",
+curvePlots_htppFeature(file_path = "figure/output/path",
                        study_name = "example_study",
                        mongoUrl = url)
 
@@ -926,7 +991,9 @@ Figure 3 demonstrates what data are populated into the htpp_bmc and the htpp_pac
 
 * The htpp_tcpl MongoDB collection houses results for all three analysis methods (Global Mahalanobis, Category-level Mahalanobis, and Feature-level curve fits).
 * BMC results are then summarized for only the Global Mahalanobis and Category-level Mahalanobis and stored in the htpp_bmc collection (one BMC per chemical for 'approach' == "global', 49 BMCs per chemical for 'approach' == "category').
-* PAC values are estimated for Global Mahalanobis and Category-level Mahalanobis BMC values and stores in the htpp_pac MongoDB collection (one PAC per chemical for 'approach' == "global' and one PAC per chemical for 'approach' == "category') 
+  + (Optional) BMC results for feature level curve fits can also be summarized and stored in htpp_bmc. 
+* PAC values are estimated for Global Mahalanobis and Category-level Mahalanobis BMC values and stores in the htpp_pac MongoDB collection (one PAC per chemical for 'approach' == "global' and one PAC per chemical for 'approach' == "category').
+  + PAC determination of Feature-level BMCs is not currently recommended.
 
 ![Figure 3. Storing Curve-fitting Results in the *htpp.pl* MongoDB Schema](Images/htpp.pl_curveFitting.png){width=85%}
 
@@ -946,7 +1013,7 @@ The **generate_htppBmc_globalMah** and **generate_htppBmc_CatMah** functions cal
 
 * Setting the appropriate 'hitcall' value for either function impacts the final BMC value for a given test chemical. Therefore, proper determination of this value is important.
 * For the **generate_htppBmc_globalMah** function, it is recommended to investigate the BMDs of null chemicals: How many percent of null chemicals have a BMD below the maximal concentration? If it is more than 10%, adjust the hitcall value to decrease that number to < 10%.
-* For the **generate_htppBmc_categoryMah**, there is a separate function, **nullProbs_catMah**, that can be used to examine the maximum hitcall probabilities for all Null chemicals. It is recommended that the 'hitcall' parameter be set to thh 90th percentile for the maximum hitcall probability.
+* For the **generate_htppBmc_categoryMah**, there is a separate function, **nullProbs_catMah**, that can be used to examine the maximum hitcall probabilities for all Null chemicals. It is recommended that the 'hitcall' parameter be set to the 90th percentile for the maximum hitcall probability.
 
 An example of running both functions is shown here:
 
@@ -964,11 +1031,28 @@ Built in quality checks:
 
 * The functions will give a warning if the number of documents in the htpp_bmc MongoDB collection is not equal to the number of documents in the htpp_tcpl MongoDB collection for 'approach' == "global" or 'approach' == "category" depending on which function is executed.
 
+
+#### (Optional) BMC Determination for Feature-level Curve Fits
+
+BMC determination is performed on Feature-level curve fits in *htpp.pl* with the function **generate_htppBmc_feature**. However, PAC determination of Feature-level BMCs is not currently recommended. 
+
+```{r, Feature-level BMC, eval=FALSE}
+#feature level BMC generation
+generate_htppBmc_feature(mongoUrl=url, rerun=FALSE) #use defaults for hitcall, bmc_min and bmc_max
+
+```
+
+
+Built in quality checks:
+
+* The function will give a warning if the number of documents in the htpp_bmc MongoDB collection is not equal to the number of documents in the htpp_tcpl MongoDB collection for 'approach' == "feature".
+
+
 #### PAC Determination for Global- and Category-level BMCs: Create htpp_pac MongoDB Collection
 
 The *htpp.pl* package has paired functions that perform essentially the same methods for determining the PAC for Global- and Category-level from the results in the htpp_bmc MongoDB collection.
 
-The **generate_htppPac_globalMah** and **generate_htppPac_CatMah** functions calculate the PACs from the concentration-response data from the htpp_tcpl MongoDB collection and sotres the results in the htpp_bmc MongoDB collection as follows:
+The **generate_htppPac_globalMah** and **generate_htppPac_CatMah** functions calculate the PACs from the concentration-response data from the htpp_tcpl MongoDB collection and stores the results in the htpp_bmc MongoDB collection as follows:
 
 * For the **generate_htppPac_globalMah** function:
     - Some columns from htpp_bmc are selected.
@@ -996,6 +1080,7 @@ generate_htppPac_catMah(mongoUrl = url) #use default for hit_n_conc
 Built in quality checks:
 
 * The functions will give a warning if the number of documents in the htpp_pac MongoDB collection is not equal to the number of documents in the htpp_bmc MongoDB collection for 'approach' == "global" or 'approach' == "category" depending on which function is executed. In the case of the Category-level function, the number of documents in htpp_pac should be the number of documents in htpp_bmc/49 to account for the 49 categories being summarized into one PAC value.
+
 
 #### QC Checks
 
@@ -1028,37 +1113,29 @@ For exploring PACs, *htpp.pl* also provides two plotting functions, **pacPlots_h
 ```{r, PAC plots, eval=FALSE}
 
 #global PAC plots
-pacPlots_htppGlobalMah(file_path = "/path/to/plot/",
+pacPlots_htppGlobalMah(file_path = "figure/output/path",
                        study_name = "example_study",
                        mongoUrl = url)
 
 #category PAC plots
-pacPlots_htppCatMah(file_path = "/path/to/plot/",
+pacPlots_htppCatMah(file_path = "figure/output/path",
                     study_name = "example_study",
                     mongoUrl = url)
 
 ```
 
-#### (Optional) BMC Determination for Feature-level Curve Fits
 
-BMC determination is **not** performed on Feature-level curve fits in *htpp.pl*. Additionally, PAC determination of Feature-level BMCs is not currently recommended. *However*, if a user wanted to perform a similar analysis for the BMC estimation the following code could be executed:
+### Storing study-level metadata
+The **generate_htppStudy** function stores metadata on the cell types, sample types, exposure durations and seeding densities used in a study in the mongo database or local folder with the results from that study.  The input data should be in dataframe or data.table format with columns for all the above variables.
 
-```{r, eval=FALSE}
+```{r, Study metadata, eval=FALSE}
 
-FitData = mongo(collection="htpp_tcpl", url=url, verbose=getOption("verbose"))$find(query=mongoQuery(approach="feature"))
-
-BMCList = FitData %>% 
-  mutate(bmc = ifelse(hitcall>0.90, bmd, NA), #hitcall can be changed
-         bmc = ifelse(top_over_cutoff<1, NA, bmc),
-         bmc = ifelse(bmc>max_conc, NA, bmc), #max_conc can be changed
-         bmc = ifelse(bmc<min_conc/10^0.5, min_conc/10^0.5, bmc), #the denominator 10^0.5 can be changed, see bmc_min in generate_htppBmc_globalMah or generate_htppBmc_CatMah htpp.pl functions
-         bmc = signif(bmc, 3),
-         cp_flag = ifelse(!is.na(bmc) & bmc<min_conc, T, F),
-         cp_flag = ifelse(n_conc<4, NA, cp_flag))
-
-#user can then insert 'BMCList' to the htpp_bmc collection using standard mongolite tools
-
+#Storing study metadata
+generate_htppStudy(input="metadata to be stored")
 ```
+Built in quality checks:
+
+* The functions lists out the number of documents added to the htpp_study collection and the number of total documents.  Those should fit with the expected number of documents from the input data.
 
 
 ## Session info

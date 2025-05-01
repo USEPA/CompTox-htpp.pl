@@ -4,7 +4,14 @@
 \alias{pseudoBmcPlots_htppCatMah}
 \title{plot pseudo-biomarker concentration and write the plots to the location specified in file_path}
 \usage{
-pseudoBmcPlots_htppCatMah(file_path, study_name, mongoUrl, bmc_min = 10^0.5)
+pseudoBmcPlots_htppCatMah(
+  file_path,
+  study_name,
+  mongoUrl,
+  bmc_min = 10^0.5,
+  use_db = T,
+  json_collection_path = ""
+)
 }
 \arguments{
 \item{file_path}{character: file path to where global mah plots will be created}
@@ -14,6 +21,10 @@ pseudoBmcPlots_htppCatMah(file_path, study_name, mongoUrl, bmc_min = 10^0.5)
 \item{mongoUrl}{character string: URL to connect to MongoDB for HTPP dataset; can be created using the mongoURL function in htpp.pl}
 
 \item{bmc_min}{numeric: Defines the denominator for calculating the minimum bmc value for cases where the bmc is less that the lowest tested conc (i.e., minimum tested conc/bmc_min); default is 10^0.5}
+
+\item{use_db}{boolean: Determines whether mongoDB will be used or not; default is TRUE}
+
+\item{json_collection_path}{character: Full file path to where JSON collections will be stored}
 }
 \description{
 plot pseudo-biomarker concentration and write the plots to the location specified in file_path

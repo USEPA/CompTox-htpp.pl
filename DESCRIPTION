@@ -1,16 +1,16 @@
 Package: htpp.pl
 Title: High-Throughput Phenotypic Profiling Pipeline
-Version: 0.3
+Version: 0.4
 Authors@R: 
     c(person("Derik", "Haggard", email = "haggard.derik@epa.gov", role = c("aut", "cre"),
            comment = c(ORCID = "0000-0001-5755-6761")), person("Joshua", "Witten", email ="witten.joshua@epa.gov", role = c("aut"),
            comment = c(ORCID = "0000-0002-4736-8959")))
-Description: This package provides code for rapid and robust processing of in vitro high-throughput phenotypic profiling (HTPP) assay data. This involves processing across multiple levels of analysis including raw data normalization, cell viability estimation, and concentration-response modeling of several analysis methods defined in Nyffeler et al. 2023 (PMID: 32862757) using the tcplfit2 R package. Results across all levels of the analysis are stored using MongoDB.
+Description: This package provides code for rapid and robust processing of in vitro high-throughput phenotypic profiling (HTPP) assay data. This involves processing across multiple levels of analysis including raw data normalization, cell viability estimation, and concentration-response modeling of several analysis methods defined in Nyffeler et al. 2023 (PMID: 32862757) using the tcplfit2 R package. Results across all levels of the analysis are stored in MongoDB, or JSON if using DB-free options.
 Imports: data.table (>= 1.14.8), plyr (>= 1.8.8), devtools (>= 2.4.3), dplyr (>= 1.1.3), tidyr (>= 1.3.0), readr (>= 2.1.4), jsonlite (>= 1.8.7), foreach (>= 1.5.2), mongolite (>= 2.7.2),stringr (>= 1.5.0), tictoc (>= 1.2), ggplot2 (>= 3.4.3), tcplfit2 (>= 0.1.5), rlist (>= 0.4.6.2), parallel (>= 3.6.0), doParallel (>= 1.0.17), tibble (>= 3.2.1)
 Encoding: UTF-8
 LazyData: true
 Roxygen: list(markdown = TRUE)
-RoxygenNote: 7.2.3
+RoxygenNote: 7.3.2
 Suggests: 
     knitr,
     rmarkdown

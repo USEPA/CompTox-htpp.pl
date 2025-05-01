@@ -7,12 +7,14 @@
 Raw2Level4(
   InputPath,
   PlateID,
-  mongoUrl,
-  Cell_Type = NULL,
+  Cell_Type,
+  mongoUrl = "",
   CellArea.Limit = NULL,
   NucleiArea.Limit = NULL,
   n_max = 2000 * 384,
-  SType = "vehicle control"
+  SType = "vehicle control",
+  use_db = TRUE,
+  json_collection_path = ""
 )
 }
 \arguments{
@@ -20,9 +22,9 @@ Raw2Level4(
 
 \item{PlateID}{character string: the plate_id for the well plate}
 
-\item{mongoUrl}{character string: The URL of the mongo database holding the collection, with user credentials to access it}
+\item{Cell_Type}{character: The cell type associated with the specific feature and category set used for a set of HTPP plates; will be saved to collections}
 
-\item{Cell_Type}{character string: the cell line used; null by default.}
+\item{mongoUrl}{character string: The URL of the mongo database holding the collection, with user credentials to access it}
 
 \item{CellArea.Limit}{list: The size range for cells examined.  If the Cell_Type is "U-2 OS", "MCF7", "A549", "ARPE-19", "HepG2" or "HTB-9", this will autofill with their ranges.  Otherwise list(c(0, 99999999)) by default.}
 
@@ -30,7 +32,11 @@ Raw2Level4(
 
 \item{n_max}{numeric: The maximum dimensions of the table}
 
-\item{SType}{character string: The type of plate used, for instance, whether it is control}
+\item{SType}{character string: The sample type used for normalization. Set to "vehicle control" by default}
+
+\item{use_db}{boolean: Determines whether mongoDB will be used or not; default is TRUE}
+
+\item{json_collection_path}{character: Full file path to where JSON collections will be stored}
 }
 \description{
 Summarize, clean and format the raw data, and store it as a Mongo collection.  Run basic QC before other steps

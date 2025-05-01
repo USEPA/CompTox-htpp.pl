@@ -9,7 +9,9 @@ globalMahalanobisDistances(
   coverVariance,
   minObjects,
   SType = "vehicle control",
-  url
+  url = "",
+  use_db = TRUE,
+  json_collection_path = ""
 )
 }
 \arguments{
@@ -22,6 +24,10 @@ globalMahalanobisDistances(
 \item{SType}{character string: Defines which sample type will be used for data normalization; "vehicle control" by default}
 
 \item{url}{character string: The MongoDB host, user, password and database}
+
+\item{use_db}{boolean: Determines whether mongoDB will be used or not; default is TRUE}
+
+\item{json_collection_path}{character: Full file path to where JSON collections will be stored}
 }
 \value{
 A list of cumulative proportion, rotation matrix and inverse covariance

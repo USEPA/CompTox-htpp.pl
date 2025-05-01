@@ -9,63 +9,82 @@ System Requirements
 
 ### R
 
-All code in this package has been tested on R 3.6.0, but any version of R 3.x or 4.x should be compatible. Other package versions may have an impact due to changes in functionality or API.
+All code in this package has been tested on R 3.6.0 and R 4.4.1, but any version of R 3.x or 4.x should be compatible. Other package versions may have an impact due to changes in functionality or API.
 
 The following R packages are required to pull existing HTTP data from MongoDB:
 
-+ mongolite - Required for DB access in R, code has been tested with v2.1.0.
-+ jsonlite - Required for DB access and handling JSON files, code has been tested with v1.6.0
-+ readr - Required to read in tables and delimited files, code has been tested with version v2.1.4
++ mongolite - Required for DB access in R
++ jsonlite - Required for DB access and handling JSON files
++ readr - Required to read in tables and delimited files
 
 Additional R packages are required to support pipelining of new HTTP data:
 
-+ doParallel - Required for parallization of certain functions for users on Linux systems, code has been tested with version v1.0.17
-+ foreach - Required for parallization of certain functions for users on Linux systems, code has been tested with version v1.5.2
-+ parallel - Required for parallization of certain functions for users on Linux systems, code has been tested with version v3.6.0
-+ tcplfit2 - Required for concentration-response modeling, code has been tested with version v0.1.5
++ doParallel - Required for parallelization of certain functions for users on Linux systems
++ foreach - Required for parallelization of certain functions for users on Linux systems
++ parallel - Required for parallelization of certain functions for users on Linux systems
++ tcplfit2 - Required for concentration-response modeling
 
 
 ### Additional R packages are also required to support formatting, plotting and timing for output legibility:
 
-+ data.table - code has been tested with version v1.14.8
-+ dplyr - code has been tested with version v1.1.3
-+ ggplot2 - code has been tested with version v3.4.3
-+ plyr - code has been tested with version v1.8.8
-+ rlist - code has been tested with version v0.4.6.2
-+ stringr - code has been tested with version v1.5.0
-+ tibble - code has been tested with version v3.2.1
-+ tictoc - code has been tested with version v1.2
-+ tidyr - code has been tested with version v1.3.0
++ data.table
++ dplyr
++ ggplot2
++ plyr
++ rlist
++ stringr
++ tibble
++ tictoc
++ tidyr
 
 
 Installing htpp.pl
 ------------------
 
-The htpp.pl package is currently implemented as a proto-R package and can be installed using the *devtools* R package.
+The htpp.pl package is an R package and can be installed using the *devtools* R package. R package dependencies, described above, should be installed prior to installing *htpp.pl*
 
-1. Ensure that R and Rstudio are properly installed (including Rtools)
-2. Clone or download the package from github (TBD):
-```bash
-git clone (TBD)
-```
-3. Move to the htpp.pl installation location and load the package using *devtools* functions in R/Rstudio:
+
+This package can be installed from the public EPA Github or installed locally after cloning the code repository:
+
+**Install from Github**
+
+1. Run devtools function to install directly from Github:
 ```r
-
 #load devtools library
 library(devtools)
 
-#change working directory to htpp.pl repo
-setwd("path/to/htpp.pl/")
+#install from Github
+devtools::install_github("USEPA/CompTox-htpp.pl")
+
+library(htpp.pl)
+```
+
+**Local installation**
+
+1. Clone or download the package from github (TBD):
+```bash
+git clone  https://github.com/USEPA/CompTox-htpp.pl.git
+```
+2. Move to the htpp.pl installation location and load the package using *devtools* functions:
+```r
+#load devtools library
+library(devtools)
 
 #use devtools functions to load package and documentation
-devtools::load_all() #loads the htpp.pl package similar to library(htpp.pl)
-devtools::document() #builds documentation, creates
-devtools::build_vignettes() #builds package vignette in '/htpp.pl/doc'
-devtools::build_manual() #build manual and saves PDF in parent directory of the package
+devtools::install_local(path="path/to/CompTox-htpp.pl/", build_vignettes=TRUE) #installs package and builds vignette
+
+library(htpp.pl)
 ```
 
 
 ### Version History
+
+**v0.4 (4/30/2025)**
+
++ Package installation can use `devtools::install_github` and `devtools::install_local`
++ Added DB-free functionality for full htpp.pl -- see vignette for details
++ Updated Vignette
++ Various code improvements and bug fixes
 
 **v0.3 (3/4/2024)**
 

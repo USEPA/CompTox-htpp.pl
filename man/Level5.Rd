@@ -4,7 +4,13 @@
 \alias{Level5}
 \title{Level 5 analysis on plate data}
 \usage{
-Level5(PlateGroup, SType = "vehicle control", mongoUrl)
+Level5(
+  PlateGroup,
+  SType = "vehicle control",
+  mongoUrl = "",
+  use_db = T,
+  json_collection_path = ""
+)
 }
 \arguments{
 \item{PlateGroup}{character string: The plate group id}
@@ -12,6 +18,10 @@ Level5(PlateGroup, SType = "vehicle control", mongoUrl)
 \item{SType}{character string: What type of plate is used, for QC check if the stype field in the data agrees with it}
 
 \item{mongoUrl}{character string: The MongoDB url of the database with user credentials}
+
+\item{use_db}{boolean: Determines whether mongoDB will be used or not; default is TRUE}
+
+\item{json_collection_path}{character: Full file path to where JSON collections will be stored}
 }
 \value{
 Median, nMAD and normalized well data

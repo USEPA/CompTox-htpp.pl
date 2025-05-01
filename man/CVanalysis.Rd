@@ -8,10 +8,12 @@ CVanalysis(
   InputPath,
   PlateID,
   SType = "vehicle control",
-  mongoUrl,
+  mongoUrl = "",
   minNucleiArea = 30,
   maxNucleiArea = 1000,
-  minRoundness = 0.5
+  minRoundness = 0.5,
+  use_db = T,
+  json_collection_path = ""
 )
 }
 \arguments{
@@ -28,6 +30,10 @@ CVanalysis(
 \item{maxNucleiArea}{numeric: The maximum area for something flagged as nucleus for QC}
 
 \item{minRoundness}{numeric: The minimum cell roundness for something to be recognized as a cell}
+
+\item{use_db}{boolean: Determines whether mongoDB will be used or not; default is TRUE}
+
+\item{json_collection_path}{character: Full file path to where JSON collections will be stored}
 }
 \description{
 Reformats the data into a Mongo collection, normalizes it based on the solvent control and finds the percent responder cells.  Inputs the cv_well and cv_image_metadata collections.

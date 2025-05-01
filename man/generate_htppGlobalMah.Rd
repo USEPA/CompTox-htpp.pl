@@ -9,8 +9,10 @@ generate_htppGlobalMah(
   minObjects,
   plot_file_path,
   study_name,
-  mongoUrl,
-  rerun = FALSE
+  mongoUrl = "",
+  rerun = FALSE,
+  use_db = TRUE,
+  json_collection_path = ""
 )
 }
 \arguments{
@@ -25,6 +27,10 @@ generate_htppGlobalMah(
 \item{mongoUrl}{URL to connect to MongoDB for HTPP dataset; can be created using the mongoURL function in htpp.pl}
 
 \item{rerun}{boolean: rerun = TRUE will drop existing cv_well collection and reinsert; FALSE by default}
+
+\item{use_db}{boolean: Determines whether mongoDB will be used or not; default is TRUE}
+
+\item{json_collection_path}{character: Full file path to where JSON collections will be stored}
 }
 \description{
 Calculate, plot and record global Mahalanobis distances from mongo data

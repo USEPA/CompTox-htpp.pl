@@ -1,5 +1,38 @@
 #' Reformatting the sample key into a more machine-readable form for later processing and checking it for errors
 #'
+#' This function performs the following checks:
+#' CIT_0 – Checks if the key is missing any of the required "replicate_num", "cell_type", "culture_id", "pg_id",
+#' "doseplate_id", "stype", "chem_id", "dtxsid", "casrn", "chem_name", "dose_level", "conc", "conc_unit",
+#' "sample_id", "plate_id", "well_id", "trt_name", "assay", "qc_flag", "qc_flag_description" fields.
+#' CIT_0 - Checks column integrity.
+#' UCT_0 – Checks if the key contains unknown fields.
+#' NAS_0 – Checks if there are NA sample IDs.
+#' DST_0 – Checks for duplicate sample IDs.
+#' SIF_0 – Checks that sample IDs all follow the correct labeling pattern.
+#' SPR_0 – Checks that the sample IDs all correspond to a plate_id_well_id format.
+#' NAP_0 – Checks if there are NA plate IDs.
+#' PIF_0 – Checks that plate IDs all follow the correct labeling pattern.
+#' WIF_0 – Checks that well IDs all follow the correct labeling pattern.
+#' WPC_0 - Checks if there are more plate IDs than well IDs, which would indicate a recording error as there should be more wells than plates.
+#' NAT_0 - Checks if any treatment names are NA.
+#' TRS_0 - Checks that every trt_name should correspond to exactly one stype
+#' TRP_0 - Checks that there is no more than one replicate for each test chemical on each plate.
+#' QCN_0 - Checks if there are NA qc flags.
+#' QCV_0 - Checks that qc flags all correspond to standard flags (OK, CELL_VIABILITY, DOSEPLATE_FAIL, DISPENSE_FAIL or SINGLE_REP)
+#' NAS_1 - Checks if there are NA stypes (experiment types).
+#' STV_0 - Checks if the stypes all correspond to the standard labels (test sample, viability positive control, vehicle control or reference chemical)
+#' CON_0 - Checks that all concentrations are in numbers.
+#' COC_0 - Checks that NA concentration units correspond to NA concentrations and vice versa.
+#' DMC_0 - Checks that NA dose levels correspond to NA concentrations and vice versa.
+#' DLI_0 - Checks that all dose levels are integers.
+#' DL0_0 - Checks that dose levels are above 0 for non-control chemicals.
+#' DCC_0 - Checks that dose levels for non-control chemicals scale with concentrations and increase monotonically.
+#' CPC_0 - Checks that replicate numbers are unique within each treatment.
+#' PIC_0 - Checks that all plate group IDs are characters.
+#' NAP_1 - Checks if there are NA plate group IDs.
+#' PGC_0 - Checks that plates are balanced within each plate group.
+#' NAR_0 - Checks if there are NA replicate numbers.
+#'
 #' @param SampleKey File name, path to file, of the sample key file (in csv format) being used
 #' @param skipped_tests The names of QC tests you want to skip
 #' @param max_dose_level The maximum dose level used
@@ -196,16 +229,6 @@ validate_htpp_sampleKey<-function(SampleKey, skipped_tests=c(), max_dose_level=8
   else
     message(paste("skipping", tests$NAT_0))
 
-  if (!"TRR_0" %in% skipped_tests){
-    message(tests$TRR_0)
-    if (nrow(Table[stype=="QC sample"])!=0 && length(unique(table(Table[stype=="QC sample", trt_name]))) != 1){
-      newelem <- "Table contains QC samples for which there isn't a fixed number of replicates per trt_name (TRR_0)"
-      results <- c(results, newelem)
-    }
-  }
-  else
-    message(paste("skipping", tests$TRR_0))
-
   if (!"TRS_0" %in% skipped_tests){
     message(tests$TRS_0)
 
@@ -252,8 +275,8 @@ validate_htpp_sampleKey<-function(SampleKey, skipped_tests=c(), max_dose_level=8
 
   if (!"QCV_0" %in% skipped_tests){
     message(tests$QCV_0)
-    if (all(Table[,qc_flag] %in% c("OK", "CELL_VIABILITY", "DOSEPLATE_FAIL", "DISPENSE_FAIL", "SINGLE_REP")) != TRUE){
-      newelem <- "qc_flag must be one of those values: OK, CELL_VIABILITY, DOSEPLATE_FAIL, DISPENSE_FAIL or SINGLE_REP (QCV_0)"
+    if (all(Table[,qc_flag] %in% c("OK", "CELL_VIABILITY", "DOSEPLATE_FAIL", "DISPENSE_FAIL", "LAB_QC_FAIL", "SINGLE_REP")) != TRUE){
+      newelem <- "qc_flag must be one of those values: OK, CELL_VIABILITY, DOSEPLATE_FAIL, DISPENSE_FAIL, LAB_QC_FAIL, or SINGLE_REP (QCV_0)"
       results <- c(results, newelem)
     }
   }
@@ -279,16 +302,6 @@ validate_htpp_sampleKey<-function(SampleKey, skipped_tests=c(), max_dose_level=8
   }
   else
     message(paste("skipping", tests$STV_0))
-
-  if (!"NAR_0" %in% skipped_tests && ('rna_src' %in% colnames(Table))){
-    message(tests$NAR_0)
-    if (sum(is.na(Table[,rna_src]))!=0){
-      newelem <- "rna_src can't be NA NAR_0"
-      results <- c(results, newelem)
-    }
-  }
-  else
-    message(paste("skipping", tests$NAR_0))
 
   if (!"CON_0" %in% skipped_tests && ('conc' %in% colnames(Table))){
     message(tests$CON_0)

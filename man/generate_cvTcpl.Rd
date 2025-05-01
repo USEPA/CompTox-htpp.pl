@@ -4,7 +4,14 @@
 \alias{generate_cvTcpl}
 \title{Creates cell viability collection cv_tcpl based on well and chem data}
 \usage{
-generate_cvTcpl(cell_viability, mongoUrl, rerun = FALSE)
+generate_cvTcpl(
+  cell_viability,
+  mongoUrl = "",
+  rerun = FALSE,
+  use_db = TRUE,
+  json_collection_path = "",
+  minObjects = 50
+)
 }
 \arguments{
 \item{cell_viability}{boolean: if cell_viability = TRUE, the CVData_all object in line 218 should pull out data from the cv_well collection, otherwise it will pull data from the htpp_well collection}
@@ -12,6 +19,12 @@ generate_cvTcpl(cell_viability, mongoUrl, rerun = FALSE)
 \item{mongoUrl}{character string: URL to connect to MongoDB for HTPP dataset; can be created using the mongoURL function in htpp.pl}
 
 \item{rerun}{boolean: rerun = TRUE will drop existing cv_tcpl collection and reinsert; FALSE by default}
+
+\item{use_db}{boolean: Determines whether mongoDB will be used or not; default is TRUE}
+
+\item{json_collection_path}{character: Full file path to where JSON collections will be stored}
+
+\item{minObjects}{numeric: minimum number of objects used for PI filtering; default is 50}
 }
 \description{
 Creates cell viability collection cv_tcpl based on well and chem data

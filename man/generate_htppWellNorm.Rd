@@ -2,15 +2,24 @@
 % Please edit documentation in R/generateCollections.R
 \name{generate_htppWellNorm}
 \alias{generate_htppWellNorm}
-\title{Create http_well_norm, a collection of normalized well data for all plate groups}
+\title{Create htpp_well_norm, a collection of normalized well data for all plate groups}
 \usage{
-generate_htppWellNorm(mongoUrl, rerun = FALSE)
+generate_htppWellNorm(
+  mongoUrl,
+  rerun = FALSE,
+  use_db = TRUE,
+  json_collection_path = ""
+)
 }
 \arguments{
 \item{mongoUrl}{character string: URL to connect to MongoDB for HTPP dataset; can be created using the mongoURL function in htpp.pl}
 
 \item{rerun}{boolean: rerun = TRUE will drop existing collection and reinsert; have FALSE by default}
+
+\item{use_db}{boolean: Determines whether mongoDB will be used or not; default is TRUE}
+
+\item{json_collection_path}{character: Full file path to where JSON collections will be stored}
 }
 \description{
-Create http_well_norm, a collection of normalized well data for all plate groups
+Create htpp_well_norm, a collection of normalized well data for all plate groups
 }

@@ -4,7 +4,14 @@
 \alias{curveFit_htppCatMah}
 \title{Category Mahalanobis curve fitting, adds category Mahalanobis fit data to htpp_tcpl collection}
 \usage{
-curveFit_htppCatMah(minObjects, mongoUrl, rerun = FALSE, nThreads = 1)
+curveFit_htppCatMah(
+  minObjects,
+  mongoUrl = "",
+  rerun = FALSE,
+  nThreads = 1,
+  use_db = T,
+  json_collection_path = ""
+)
 }
 \arguments{
 \item{minObjects}{numeric: The minimum number of objects used to filter the dataset for analysis}
@@ -14,6 +21,10 @@ curveFit_htppCatMah(minObjects, mongoUrl, rerun = FALSE, nThreads = 1)
 \item{rerun}{boolean: rerun = TRUE will drop existing htpp_tcpl collection for global mah values (htpp_tcpl$remove(query=mongoQuery(approach="category")) and reinsert; FALSE by default}
 
 \item{nThreads}{numeric: the number of threads to use for processing; default is 1}
+
+\item{use_db}{boolean: Determines whether mongoDB will be used or not; default is TRUE}
+
+\item{json_collection_path}{character: Full file path to where JSON collections will be stored}
 }
 \description{
 Category Mahalanobis curve fitting, adds category Mahalanobis fit data to htpp_tcpl collection

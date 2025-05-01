@@ -543,7 +543,6 @@ plotCurves <- function(Subset, xLim=NULL, TestedRange=NULL,
 #'
 concRespPlot_JN <- function(row, ymin=NULL, ymax=NULL) {
 
-  dtxsid <- row[1,"dtxsid"]
 
   #every variable in PATHWAY_CR goes into the environment to make it easy
   #to update this function to use new PATHWAY_CR data.

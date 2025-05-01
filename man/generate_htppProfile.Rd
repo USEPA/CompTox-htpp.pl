@@ -2,19 +2,31 @@
 % Please edit documentation in R/generateCollections.R
 \name{generate_htppProfile}
 \alias{generate_htppProfile}
-\title{create htpp_profile collection}
+\title{create htpp_profile collection
+This collection is mainly used for data visualization.
+Computes the median value across all features for a given chemical treatment.}
 \usage{
-generate_htppProfile(n_cells, relative_cellCount, mongoUrl, rerun = FALSE)
+generate_htppProfile(
+  minObjects,
+  mongoUrl,
+  rerun = FALSE,
+  use_db = TRUE,
+  json_collection_path = ""
+)
 }
 \arguments{
-\item{n_cells}{numeric: Minimum threshold for the number of cells to keep for filtering}
-
-\item{relative_cellCount}{numeric: Minimum threshold of the count of relative number of cells to use for filtering}
+\item{minObjects}{numeric: Minimum threshold for the number of cells to keep for filtering}
 
 \item{mongoUrl}{character string: URL to connect to MongoDB for HTPP dataset; can be created using the mongoURL function in htpp.pl}
 
 \item{rerun}{boolean: rerun = TRUE will drop existing collection and reinsert; FALSE by default}
+
+\item{use_db}{boolean: Determines whether mongoDB will be used or not; default is TRUE}
+
+\item{json_collection_path}{character: Full file path to where JSON collections will be stored}
 }
 \description{
 create htpp_profile collection
+This collection is mainly used for data visualization.
+Computes the median value across all features for a given chemical treatment.
 }

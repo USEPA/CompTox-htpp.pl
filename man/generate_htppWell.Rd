@@ -6,14 +6,16 @@
 \usage{
 generate_htppWell(
   file_path,
-  mongoUrl,
+  mongoUrl = "",
   Cell_Type,
   CellArea.Limit,
   NucleiArea.Limit,
   SType = "vehicle control",
   n_max = 2000 * 384,
   rerun = FALSE,
-  replace = FALSE
+  replace = FALSE,
+  use_db = TRUE,
+  json_collection_path = ""
 )
 }
 \arguments{
@@ -34,6 +36,10 @@ generate_htppWell(
 \item{rerun}{boolean: Whether to drop and replace the collections in the dataframe before inserting}
 
 \item{replace}{boolean: Whether you want to replace existing records in the mongo database; false by default}
+
+\item{use_db}{boolean: Determines whether mongoDB will be used or not; default is TRUE}
+
+\item{json_collection_path}{character: Full file path to where JSON collections will be stored}
 }
 \description{
 Creates htppWell collections (htpp_well_raw, htpp_well, htpp_image_metadata)
