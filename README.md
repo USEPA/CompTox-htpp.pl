@@ -112,3 +112,10 @@ library(htpp.pl)
 
 + Initial version of code adapted from J. Nyffeler
 
+Contributors
+------------
+
++ **[Derik E. Haggard](mailto:haggard.derik@epa.gov)**
++ **[Joshua Harrill](mailto:harrill.joshua@epa.gov)**
++ **Joshua Witten**
++ **Jo Nyffeler**
